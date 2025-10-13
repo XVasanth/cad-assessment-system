@@ -10,15 +10,26 @@ import itertools
 import report_generator
 
 app = Flask(__name__)
-PROCESSING_DIR = Path("temp_processing_files")
+
+# --- START OF FIX ---
+# Get the directory of the current script (the 'backend' folder)
+BACKEND_DIR = Path(__file__).resolve().parent
+# Get the root project directory by going one level up
+PROJECT_ROOT = BACKEND_DIR.parent
+
+# Define paths relative to the project root for robustness
+PROCESSING_DIR = PROJECT_ROOT / "temp_processing_files"
+WORKER_SCRIPT_PATH = PROJECT_ROOT / "worker" / "sw_worker.py"
+# --- END OF FIX ---
+
 PROCESSING_DIR.mkdir(exist_ok=True)
-WORKER_SCRIPT_PATH = Path("../worker/sw_worker.py").resolve()
 
 def get_signature(file_path, job_dir):
     """Calls the worker to get a feature signature from a file."""
     output_json = job_dir / f"{file_path.stem}_sig.json"
     command = ["python", str(WORKER_SCRIPT_PATH), str(file_path), str(output_json)]
-    subprocess.run(command, check=True, capture_output=True, text=True)
+    # Use shell=True for better path handling on Windows, though not always necessary
+    subprocess.run(command, check=True, capture_output=True, text=True, shell=True) 
     with open(output_json, 'r') as f:
         return json.load(f)
 
@@ -51,14 +62,13 @@ def analyze():
         full_sig_data = get_signature(s_path, job_dir)
         full_signature = full_sig_data.get("signature", [])
         
-        # Delta Logic: Check if the base signature is a prefix
         base_modified = False
         delta = []
         if len(full_signature) >= len(base_signature) and full_signature[:len(base_signature)] == base_signature:
             delta = full_signature[len(base_signature):]
         else:
             base_modified = True
-            delta = full_signature # If modified, the whole tree is the delta for grading purposes
+            delta = full_signature
         
         student_deltas[s_path.name] = {
             "delta": delta,
@@ -73,26 +83,22 @@ def analyze():
         delta1 = student_deltas[student1]["delta"]
         delta2 = student_deltas[student2]["delta"]
         
-        # If deltas are identical and not empty, it's a match
         if len(delta1) > 0 and delta1 == delta2:
             plagiarism_results[student1].update({"is_plagiarised": True, "copied_from": student2})
             plagiarism_results[student2].update({"is_plagiarised": True, "copied_from": student1})
 
-    # 5. Generate PDF reports for each student
+    # 5. Generate PDF reports
     pdf_paths = []
     for s_path in student_paths:
         student_name = s_path.name
-        analysis_data = {
-            "student_file": student_name,
-            **student_deltas[student_name]
-        }
+        analysis_data = {"student_file": student_name, **student_deltas[student_name]}
         plagiarism_info = plagiarism_results[student_name]
         output_pdf_path = job_dir / f"{s_path.stem}_report.pdf"
         
         report_generator.create_report(analysis_data, plagiarism_info, output_pdf_path)
         pdf_paths.append(output_pdf_path)
         
-    # 6. Package reports into a single zip and send to user
+    # 6. Package reports and send to user
     final_zip_path = job_dir / "assessment_reports.zip"
     with zipfile.ZipFile(final_zip_path, 'w') as zf:
         for pdf_path in pdf_paths:
