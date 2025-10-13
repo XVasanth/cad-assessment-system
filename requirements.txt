@@ -1,8 +1,5 @@
+Flask
 streamlit
-flask
-pywin32 
+pywin32
 fpdf2
-numpy
-sys
-json
-datetime
+requests
