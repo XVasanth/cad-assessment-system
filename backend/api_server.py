@@ -19,7 +19,7 @@ def get_analysis_data(file_path, job_dir):
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
-    # 1. Setup and save files
+    # 1. Setup and file handling
     master_file = request.files['master_file']
     student_zip = request.files['student_zip']
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -33,61 +33,66 @@ def analyze():
             if name.lower().endswith('.sldprt') and not name.startswith('__MACOSX'):
                 student_paths.append(job_dir / name)
 
-    # 2. Analyze master and student files
+    # 2. Analyze all files
     master_data = get_analysis_data(master_file_path, job_dir)
     base_signature = master_data.get("signature", [])
     master_volume = master_data.get("volume_mm3", 0.0)
+    master_gdt = set(master_data.get("gdt_callouts", []))
 
     student_analysis_data = {}
     for s_path in student_paths:
         s_data = get_analysis_data(s_path, job_dir)
         full_signature = s_data.get("signature", [])
         student_volume = s_data.get("volume_mm3", 0.0)
+        student_gdt = set(s_data.get("gdt_callouts", []))
         
         base_modified = not (len(full_signature) >= len(base_signature) and full_signature[:len(base_signature)] == base_signature)
         delta = full_signature[len(base_signature):] if not base_modified else full_signature
-        
         volume_dev = abs(student_volume - master_volume) / master_volume * 100 if master_volume > 0 else 0
         
+        gdt_match = "Match" if student_gdt == master_gdt else "Mismatch"
+        if not student_gdt and master_gdt: gdt_match = "Missing"
+
         student_analysis_data[s_path.name] = {
-            "delta": delta, "base_modified": base_modified, "delta_feature_count": len(delta),
-            "volume_deviation_percent": volume_dev, "student_volume_mm3": student_volume
+            "delta": delta, "base_modified": base_modified, "volume_deviation_percent": volume_dev, 
+            "student_volume_mm3": student_volume, "gdt_match_status": gdt_match
         }
     
-    # 3. Plagiarism Check
+    # 3. Plagiarism "Handshake" Check
     plagiarism_results = {name: {"is_plagiarised": False, "copied_from": None} for name in student_analysis_data.keys()}
-    for (s1, s2) in itertools.combinations(student_analysis_data.keys(), 2):
-        delta1, delta2 = student_analysis_data[s1]["delta"], student_analysis_data[s2]["delta"]
-        if len(delta1) > 0 and delta1 == delta2:
-            plagiarism_results[s1].update({"is_plagiarised": True, "copied_from": s2})
-            plagiarism_results[s2].update({"is_plagiarised": True, "copied_from": s1})
+    for (s1_name, s2_name) in itertools.combinations(student_analysis_data.keys(), 2):
+        s1_data, s2_data = student_analysis_data[s1_name], student_analysis_data[s2_name]
+        
+        deltas_match = len(s1_data["delta"]) > 0 and s1_data["delta"] == s2_data["delta"]
+        volumes_match = abs(s1_data["student_volume_mm3"] - s2_data["student_volume_mm3"]) < 0.001
+        
+        if deltas_match or volumes_match:
+            plagiarism_results[s1_name].update({"is_plagiarised": True, "copied_from": s2_name})
+            plagiarism_results[s2_name].update({"is_plagiarised": True, "copied_from": s1_name})
 
-    # 4. Generate PDF reports and collect data for CSV
+    # 4. Generate Reports and CSV
     pdf_paths, csv_data = [], []
     for s_path in student_paths:
-        student_name = s_path.name
-        analysis_data = {"student_file": student_name, "master_volume_mm3": master_volume, **student_analysis_data[student_name]}
-        plagiarism_info = plagiarism_results[student_name]
+        analysis_data = {"student_file": s_path.name, "master_volume_mm3": master_volume, **student_analysis_data[s_path.name]}
+        plagiarism_info = plagiarism_results[s_path.name]
         
-        # Generate PDF
         output_pdf_path = job_dir / f"{s_path.stem}_report.pdf"
         report_generator.create_report(analysis_data, plagiarism_info, output_pdf_path); pdf_paths.append(output_pdf_path)
         
-        # Collect CSV row data
         stem = s_path.stem; parts = stem.split('_', 1)
         reg_num, part_name = parts if len(parts) == 2 else ("N/A", stem)
         csv_data.append({
             "Register Number": reg_num, "Part Name": part_name,
             "Volume Deviation (%)": f"{analysis_data['volume_deviation_percent']:.4f}",
             "Accuracy Grade": report_generator.get_accuracy_grade(analysis_data['volume_deviation_percent']),
+            "GD&T Status": analysis_data['gdt_match_status'],
             "Plagiarism Flag": "YES" if plagiarism_info['is_plagiarised'] else "NO"
         })
 
-    # 5. Create CSV Summary
+    # 5. Create final ZIP package
     summary_csv_path = job_dir / "summary_report.csv"
     pd.DataFrame(csv_data).to_csv(summary_csv_path, index=False)
 
-    # 6. Package all reports into a single zip
     final_zip_path = job_dir / "assessment_reports.zip"
     with zipfile.ZipFile(final_zip_path, 'w') as zf:
         for pdf_path in pdf_paths: zf.write(pdf_path, arcname=pdf_path.name)
