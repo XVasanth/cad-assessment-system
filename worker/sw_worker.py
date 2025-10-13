@@ -3,12 +3,18 @@ import win32com.client
 import sys
 import json
 
-def generate_signature(file_path):
+def analyze_part(file_path):
     """
-    Opens a SOLIDWORKS part and generates a detailed feature signature.
-    The signature is a list of tuples: (FeatureTypeName, NumSketchPoints, NumSketchSegments).
+    Opens a SOLIDWORKS part and extracts a detailed signature and mass properties.
+    The signature now includes the specific feature name for robust plagiarism detection.
     """
-    signature = []
+    analysis_results = {
+        "status": "Failed",
+        "signature": [],
+        "volume_mm3": 0.0,
+        "surface_area_mm2": 0.0,
+        "error": ""
+    }
     swApp = None
     swModel = None
     try:
@@ -17,11 +23,13 @@ def generate_signature(file_path):
         if not swModel:
             raise Exception("Failed to open document.")
 
+        # 1. Generate a MORE ROBUST Feature Signature
         feature = swModel.FirstFeature()
         while feature:
+            # *** KEY CHANGE: Capture the feature's actual name ***
+            feature_name = feature.Name
             feature_typename = feature.GetTypeName2()
             
-            # Get sketch info if the feature has a sketch
             num_points, num_segments = 0, 0
             sketch = feature.GetSpecificFeature2()
             if sketch and hasattr(sketch, 'GetSketch'):
@@ -32,30 +40,37 @@ def generate_signature(file_path):
                     num_points = len(points) if points else 0
                     num_segments = len(segments) if segments else 0
             
-            # Add a tuple representing this feature to the signature
-            signature.append((feature_typename, num_points, num_segments))
-            
+            # Use a dictionary for a clearer signature
+            analysis_results["signature"].append({
+                "name": feature_name,
+                "type": feature_typename,
+                "sketch_points": num_points,
+                "sketch_segments": num_segments
+            })
             feature = feature.GetNextFeature()
 
-        return {"status": "Success", "signature": signature, "error": ""}
+        # 2. Get Mass Properties
+        mass_props = swModel.Extension.GetMassProperties(1, 0)
+        if mass_props:
+            analysis_results["volume_mm3"] = mass_props[5] * (1000**3)
+            analysis_results["surface_area_mm2"] = mass_props[4] * (1000**2)
+        
+        analysis_results["status"] = "Success"
+        return analysis_results
     
     except Exception as e:
-        return {"status": "Failed", "signature": [], "error": str(e)}
+        analysis_results["error"] = str(e)
+        return analysis_results
 
     finally:
         if swModel:
             swApp.CloseDoc(swModel.GetTitle())
 
 if __name__ == "__main__":
-    # Expects 2 arguments: input file path and output json path
     if len(sys.argv) != 3:
         print("Usage: python sw_worker.py <input_file> <output_json>")
         sys.exit(1)
     
-    input_file = sys.argv[1]
-    output_json = sys.argv[2]
-    
-    result = generate_signature(input_file)
-    
-    with open(output_json, 'w') as f:
+    result = analyze_part(sys.argv[1])
+    with open(sys.argv[2], 'w') as f:
         json.dump(result, f, indent=4)
