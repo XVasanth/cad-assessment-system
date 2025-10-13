@@ -1,40 +1,54 @@
 # worker/sw_worker.py
 import win32com.client, sys, json
 
+def get_gdt_data(swModel):
+    """Iterates through annotations to extract GD&T Feature Control Frame data."""
+    gdt_list = []
+    try:
+        swAnnManager = swModel.Extension.GetAnnotationManager()
+        if not swAnnManager: return gdt_list
+        swAnnViews = swAnnManager.GetAnnotationViews()
+        if not swAnnViews: return gdt_list
+
+        for view in swAnnViews:
+            view.Activate()
+            annotations = view.GetAnnotations()
+            if annotations:
+                for swAnn in annotations:
+                    if swAnn.GetType() == 30: # 30 = swFcfAnnotation
+                        full_text = swAnn.GetText(0).replace('\n', ' ').strip()
+                        if full_text: gdt_list.append(full_text)
+        return sorted(list(set(gdt_list))) # Return a unique, sorted list
+    except Exception:
+        return []
+
 def analyze_part(file_path):
-    analysis_results = { "status": "Failed", "signature": [], "volume_mm3": 0.0, "surface_area_mm2": 0.0, "error": "" }
+    """Analyzes a part for features, mass properties, and GD&T."""
+    results = { "status": "Failed", "signature": [], "volume_mm3": 0.0, "gdt_callouts": [], "error": "" }
     swApp, swModel = None, None
     try:
         swApp = win32com.client.Dispatch("SldWorks.Application")
         swModel = swApp.OpenDoc6(file_path, 1, 1, "", 0, 0)
         if not swModel: raise Exception("Failed to open document.")
 
+        # 1. Feature Signature (for plagiarism)
         feature = swModel.FirstFeature()
         while feature:
-            sketch_points, sketch_segments = 0, 0
-            sketch = feature.GetSpecificFeature2()
-            if sketch and hasattr(sketch, 'GetSketch') and sketch.GetSketch():
-                points = sketch.GetSketch().GetSketchPoints2()
-                segments = sketch.GetSketch().GetSketchSegments()
-                sketch_points = len(points) if points else 0
-                sketch_segments = len(segments) if segments else 0
-            
-            analysis_results["signature"].append({
-                "name": feature.Name, "type": feature.GetTypeName2(),
-                "sketch_points": sketch_points, "sketch_segments": sketch_segments
-            })
+            results["signature"].append({"name": feature.Name, "type": feature.GetTypeName2()})
             feature = feature.GetNextFeature()
 
+        # 2. Mass Properties (for deviation)
         mass_props = swModel.Extension.GetMassProperties(1, 0)
-        if mass_props:
-            analysis_results["volume_mm3"] = mass_props[5] * (1000**3)
-            analysis_results["surface_area_mm2"] = mass_props[4] * (1000**2)
+        if mass_props: results["volume_mm3"] = mass_props[5] * (1000**3)
         
-        analysis_results["status"] = "Success"
-        return analysis_results
+        # 3. GD&T Data (for accuracy)
+        results["gdt_callouts"] = get_gdt_data(swModel)
+        
+        results["status"] = "Success"
+        return results
     except Exception as e:
-        analysis_results["error"] = str(e)
-        return analysis_results
+        results["error"] = str(e)
+        return results
     finally:
         if swModel: swApp.CloseDoc(swModel.GetTitle())
 
