@@ -1,0 +1,8 @@
+streamlit
+flask
+pywin32 
+fpdf2
+numpy
+sys
+json
+datetime
