@@ -13,20 +13,35 @@ WORKER_SCRIPT_PATH = PROJECT_ROOT / "worker" / "sw_worker.py"
 PROCESSING_DIR.mkdir(exist_ok=True)
 PLAGIARISM_COMPLEXITY_THRESHOLD = 3
 
+# --- THE DEFINITIVE FIX: Explicitly define the Python executable from the venv ---
+PYTHON_EXECUTABLE = PROJECT_ROOT / "venv" / "Scripts" / "python.exe"
+
 def get_analysis_data(file_path, job_dir):
     output_json = job_dir / f"{file_path.stem}_analysis.json"
-    command = ["python", str(WORKER_SCRIPT_PATH), str(file_path), str(output_json)]
-    subprocess.run(command, check=True, capture_output=True, text=True, shell=True) 
-    with open(output_json, 'r') as f: return json.load(f)
+    
+    # Use the specific Python executable from our virtual environment
+    command = [
+        str(PYTHON_EXECUTABLE), 
+        str(WORKER_SCRIPT_PATH), 
+        str(file_path), 
+        str(output_json)
+    ]
+    
+    # Run the command
+    result = subprocess.run(command, check=True, capture_output=True, text=True, shell=True)
+    
+    with open(output_json, 'r') as f: 
+        return json.load(f)
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
-    # 1. Setup and file handling (unchanged)
+    # 1. Setup and file handling
     master_file = request.files['master_file']
     student_zip = request.files['student_zip']
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     job_dir = PROCESSING_DIR / timestamp; job_dir.mkdir()
     master_file_path = job_dir / master_file.filename; master_file.save(master_file_path)
+
     student_paths = []
     with zipfile.ZipFile(student_zip, 'r') as zf:
         zf.extractall(job_dir)
@@ -34,7 +49,7 @@ def analyze():
             if name.lower().endswith('.sldprt') and not name.startswith('__MACOSX'):
                 student_paths.append(job_dir / name)
 
-    # 2. Analyze all files (unchanged)
+    # 2. Analyze all files
     master_data = get_analysis_data(master_file_path, job_dir)
     base_signature = master_data.get("signature", [])
     master_volume = master_data.get("volume_mm3", 0.0)
@@ -58,27 +73,23 @@ def analyze():
             "student_volume_mm3": student_volume, "gdt_match_status": gdt_match
         }
     
-    # 3. *** FINAL, ROBUST PLAGIARISM LOGIC ***
+    # 3. Plagiarism Logic
     plagiarism_results = {name: {"is_plagiarised": False, "copied_from": []} for name in student_analysis_data.keys()}
-    
-    # Group students ONLY by their complex feature delta signature
     delta_groups = defaultdict(list)
     for name, data in student_analysis_data.items():
         delta = data["delta"]
-        # Only consider deltas that are complex enough to be suspicious
         if len(delta) > PLAGIARISM_COMPLEXITY_THRESHOLD:
             delta_str = json.dumps(delta, sort_keys=True)
             delta_hash = hashlib.md5(delta_str.encode()).hexdigest()
             delta_groups[delta_hash].append(name)
             
-    # Now, populate results based ONLY on these delta groups
     for group in delta_groups.values():
-        if len(group) > 1: # A group with more than one member is a plagiarism cluster
+        if len(group) > 1:
             for member_name in group:
                 plagiarism_results[member_name]["is_plagiarised"] = True
                 plagiarism_results[member_name]["copied_from"].extend([other for other in group if other != member_name])
 
-    # 4. Generate Reports and CSV (unchanged)
+    # 4. Generate Reports and CSV
     pdf_paths, csv_data = [], []
     for s_path in student_paths:
         analysis_data = {"student_file": s_path.name, "master_volume_mm3": master_volume, **student_analysis_data[s_path.name]}
@@ -98,7 +109,7 @@ def analyze():
             "Plagiarism Flag": "YES" if plagiarism_info['is_plagiarised'] else "NO"
         })
 
-    # 5. Create final ZIP package (unchanged)
+    # 5. Create final ZIP package
     summary_csv_path = job_dir / "summary_report.csv"
     pd.DataFrame(csv_data).to_csv(summary_csv_path, index=False)
     final_zip_path = job_dir / "assessment_reports.zip"
