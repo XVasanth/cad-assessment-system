@@ -19,8 +19,26 @@ def get_analysis_data(file_path, job_dir):
     output_json = job_dir / f"{file_path.stem}_analysis.json"
     command = [str(PYTHON_EXECUTABLE), str(WORKER_SCRIPT_PATH), str(file_path), str(output_json)]
     result = subprocess.run(command, check=True, capture_output=True, text=True, shell=True)
+    
+    # Print subprocess output for debugging
+    if result.stdout:
+        print(result.stdout)
+    if result.stderr:
+        print("STDERR:", result.stderr)
+    
     with open(output_json, 'r') as f: 
-        return json.load(f)
+        data = json.load(f)
+    
+    # Debug: Print what we loaded
+    print(f"\n*** JSON DATA LOADED ***")
+    print(f"File: {file_path.name}")
+    print(f"Volume from JSON: {data.get('volume_mm3', 0.0):.6f} mm^3")
+    print(f"Status from JSON: {data.get('status', 'Unknown')}")
+    if data.get('error'):
+        print(f"Error from JSON: {data.get('error')}")
+    print(f"{'*'*30}\n")
+    
+    return data
 
 def compare_gdt(master_gdt_data, student_gdt_data):
     """
@@ -105,8 +123,14 @@ def analyze():
     master_volume = master_data.get("volume_mm3", 0.0)
     master_gdt_data = master_data.get("gdt_data", {})
     
-    print(f"Master Volume: {master_volume:.2f} mm³")
+    print(f"\n*** MASTER DATA RECEIVED ***")
+    print(f"Master Volume: {master_volume:.6f} mm^3")
+    print(f"Master Features: {len(base_signature)}")
     print(f"Master GD&T Count: {len(master_gdt_data.get('combined_signature', []))}")
+    print(f"Master Status: {master_data.get('status', 'Unknown')}")
+    if master_data.get('error'):
+        print(f"Master Error: {master_data.get('error')}")
+    print(f"{'='*60}\n")
 
     # 3. Analyze all student files
     student_analysis_data = {}
@@ -125,7 +149,13 @@ def analyze():
         
         # Volume deviation
         volume_dev = abs(student_volume - master_volume) / master_volume * 100 if master_volume > 0 else 0
-        print(f"  Volume: {student_volume:.2f} mm³ (deviation: {volume_dev:.2f}%)")
+        
+        print(f"\n*** VOLUME COMPARISON ***")
+        print(f"  Master Volume: {master_volume:.6f} mm^3")
+        print(f"  Student Volume: {student_volume:.6f} mm^3")
+        print(f"  Difference: {abs(student_volume - master_volume):.6f} mm^3")
+        print(f"  Deviation: {volume_dev:.4f}%")
+        print(f"{'*'*30}")
         
         # Detailed GD&T comparison
         gdt_comparison = compare_gdt(master_gdt_data, student_gdt_data)
