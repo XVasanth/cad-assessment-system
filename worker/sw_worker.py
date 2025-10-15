@@ -18,7 +18,7 @@ def get_gdt_data(swModel):
                     if swAnn.GetType() == 30: # 30 = swFcfAnnotation
                         full_text = swAnn.GetText(0).replace('\n', ' ').strip()
                         if full_text: gdt_list.append(full_text)
-        return sorted(list(set(gdt_list))) # Return a unique, sorted list
+        return sorted(list(set(gdt_list)))
     except Exception:
         return []
 
@@ -28,20 +28,24 @@ def analyze_part(file_path):
     swApp, swModel = None, None
     try:
         swApp = win32com.client.Dispatch("SldWorks.Application")
+
+        # --- THE FIX: Ensure a clean slate before opening any new file ---
+        swApp.CloseAllDocuments(True) # True = Close without asking to save
+        
         swModel = swApp.OpenDoc6(file_path, 1, 1, "", 0, 0)
         if not swModel: raise Exception("Failed to open document.")
 
-        # 1. Feature Signature (for plagiarism)
+        # 1. Feature Signature
         feature = swModel.FirstFeature()
         while feature:
             results["signature"].append({"name": feature.Name, "type": feature.GetTypeName2()})
             feature = feature.GetNextFeature()
 
-        # 2. Mass Properties (for deviation)
+        # 2. Mass Properties
         mass_props = swModel.Extension.GetMassProperties(1, 0)
         if mass_props: results["volume_mm3"] = mass_props[5] * (1000**3)
         
-        # 3. GD&T Data (for accuracy)
+        # 3. GD&T Data
         results["gdt_callouts"] = get_gdt_data(swModel)
         
         results["status"] = "Success"
@@ -50,6 +54,7 @@ def analyze_part(file_path):
         results["error"] = str(e)
         return results
     finally:
+        # The CloseAllDocuments call makes this redundant, but it's good practice
         if swModel: swApp.CloseDoc(swModel.GetTitle())
 
 if __name__ == "__main__":
