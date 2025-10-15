@@ -11,6 +11,11 @@ PROCESSING_DIR = PROJECT_ROOT / "temp_processing_files"
 WORKER_SCRIPT_PATH = PROJECT_ROOT / "worker" / "sw_worker.py"
 PROCESSING_DIR.mkdir(exist_ok=True)
 
+# --- NEW: Define a threshold for what is considered a "complex" sequence of features ---
+# A delta of 3 or fewer features is considered too simple to be a reliable plagiarism signal.
+# You can adjust this value based on your assignments.
+PLAGIARISM_COMPLEXITY_THRESHOLD = 3
+
 def get_analysis_data(file_path, job_dir):
     output_json = job_dir / f"{file_path.stem}_analysis.json"
     command = ["python", str(WORKER_SCRIPT_PATH), str(file_path), str(output_json)]
@@ -19,7 +24,7 @@ def get_analysis_data(file_path, job_dir):
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
-    # 1. Setup and file handling
+    # 1. Setup and file handling (unchanged)
     master_file = request.files['master_file']
     student_zip = request.files['student_zip']
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -33,7 +38,7 @@ def analyze():
             if name.lower().endswith('.sldprt') and not name.startswith('__MACOSX'):
                 student_paths.append(job_dir / name)
 
-    # 2. Analyze all files
+    # 2. Analyze all files (unchanged)
     master_data = get_analysis_data(master_file_path, job_dir)
     base_signature = master_data.get("signature", [])
     master_volume = master_data.get("volume_mm3", 0.0)
@@ -58,19 +63,26 @@ def analyze():
             "student_volume_mm3": student_volume, "gdt_match_status": gdt_match
         }
     
-    # 3. Plagiarism "Handshake" Check
+    # 3. *** UPDATED PLAGIARISM "HANDSHAKE" CHECK ***
     plagiarism_results = {name: {"is_plagiarised": False, "copied_from": None} for name in student_analysis_data.keys()}
     for (s1_name, s2_name) in itertools.combinations(student_analysis_data.keys(), 2):
         s1_data, s2_data = student_analysis_data[s1_name], student_analysis_data[s2_name]
         
-        deltas_match = len(s1_data["delta"]) > 0 and s1_data["delta"] == s2_data["delta"]
+        # Condition 1: The feature deltas are identical AND sufficiently complex
+        deltas_match = (
+            len(s1_data["delta"]) > PLAGIARISM_COMPLEXITY_THRESHOLD and 
+            s1_data["delta"] == s2_data["delta"]
+        )
+        
+        # Condition 2: The final volumes are nearly identical (a direct file copy)
         volumes_match = abs(s1_data["student_volume_mm3"] - s2_data["student_volume_mm3"]) < 0.001
         
+        # If either condition is true, flag it as plagiarism
         if deltas_match or volumes_match:
             plagiarism_results[s1_name].update({"is_plagiarised": True, "copied_from": s2_name})
             plagiarism_results[s2_name].update({"is_plagiarised": True, "copied_from": s1_name})
 
-    # 4. Generate Reports and CSV
+    # 4. Generate Reports and CSV (unchanged)
     pdf_paths, csv_data = [], []
     for s_path in student_paths:
         analysis_data = {"student_file": s_path.name, "master_volume_mm3": master_volume, **student_analysis_data[s_path.name]}
@@ -89,7 +101,7 @@ def analyze():
             "Plagiarism Flag": "YES" if plagiarism_info['is_plagiarised'] else "NO"
         })
 
-    # 5. Create final ZIP package
+    # 5. Create final ZIP package (unchanged)
     summary_csv_path = job_dir / "summary_report.csv"
     pd.DataFrame(csv_data).to_csv(summary_csv_path, index=False)
 
