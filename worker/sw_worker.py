@@ -1,12 +1,10 @@
 # worker/sw_worker.py
 import win32com.client, sys, json
 import pythoncom
+import time
 
 def get_gdt_data(swModel):
-    """
-    Comprehensive GD&T extraction including DimXpert annotations.
-    Returns a dictionary with detailed GD&T information.
-    """
+    """Comprehensive GD&T extraction including DimXpert annotations."""
     gdt_data = {
         "feature_control_frames": [],
         "dimxpert_annotations": [],
@@ -15,7 +13,6 @@ def get_gdt_data(swModel):
     }
     
     try:
-        # Method 1: Traditional Feature Control Frames from Annotations
         swAnnManager = swModel.Extension.GetAnnotationManager()
         if swAnnManager:
             swAnnViews = swAnnManager.GetAnnotationViews()
@@ -27,8 +24,6 @@ def get_gdt_data(swModel):
                         if annotations:
                             for swAnn in annotations:
                                 ann_type = swAnn.GetType()
-                                
-                                # Type 30 = Feature Control Frame
                                 if ann_type == 30:
                                     try:
                                         full_text = swAnn.GetText(0).replace('\n', ' ').strip()
@@ -36,8 +31,6 @@ def get_gdt_data(swModel):
                                             gdt_data["feature_control_frames"].append(full_text)
                                     except:
                                         pass
-                                
-                                # Type 23 = Datum Feature Symbol
                                 elif ann_type == 23:
                                     try:
                                         datum_text = swAnn.GetText(0).strip()
@@ -48,11 +41,9 @@ def get_gdt_data(swModel):
                     except:
                         continue
         
-        # Method 2: DimXpert Manager - Captures auto-generated GD&T
         try:
             dimXpertMgr = swModel.Extension.GetDimXpertManager()
             if dimXpertMgr:
-                # Get all DimXpert annotations
                 dimxpert_anns = dimXpertMgr.GetAllDimXpertAnnotations()
                 if dimxpert_anns:
                     for ann in dimxpert_anns:
@@ -62,7 +53,6 @@ def get_gdt_data(swModel):
                         except:
                             pass
                 
-                # Get tolerances directly
                 tolerances = dimXpertMgr.GetAllTolerances()
                 if tolerances:
                     for tol in tolerances:
@@ -74,7 +64,6 @@ def get_gdt_data(swModel):
         except Exception as e:
             print(f"DimXpert extraction note: {str(e)}")
         
-        # Method 3: Feature-level tolerance extraction
         try:
             feature = swModel.FirstFeature()
             while feature:
@@ -93,13 +82,11 @@ def get_gdt_data(swModel):
     except Exception as e:
         print(f"GD&T extraction error: {str(e)}")
     
-    # Clean up and deduplicate
     gdt_data["feature_control_frames"] = sorted(list(set(gdt_data["feature_control_frames"])))
     gdt_data["dimxpert_annotations"] = sorted(list(set(gdt_data["dimxpert_annotations"])))
     gdt_data["datums"] = sorted(list(set(gdt_data["datums"])))
     gdt_data["geometric_tolerances"] = sorted(list(set(gdt_data["geometric_tolerances"])))
     
-    # Create a combined signature for easy comparison
     all_gdt = (gdt_data["feature_control_frames"] + 
                gdt_data["dimxpert_annotations"] + 
                gdt_data["datums"] + 
@@ -109,9 +96,7 @@ def get_gdt_data(swModel):
     return gdt_data
 
 def analyze_part(file_path):
-    """
-    Analyzes a part using a robust protocol to ensure accurate measurement.
-    """
+    """Analyzes a part using a robust protocol to ensure accurate measurement."""
     pythoncom.CoInitialize()
     results = { 
         "status": "Failed", 
@@ -124,107 +109,165 @@ def analyze_part(file_path):
     swApp, swModel = None, None
     
     try:
+        print(f"\n{'='*70}")
+        print(f"ANALYZING: {file_path}")
+        print(f"{'='*70}")
+        
         swApp = win32com.client.GetActiveObject("SldWorks.Application")
+        print("[1] Connected to SOLIDWORKS")
         
-        print(f"\n{'='*60}")
-        print(f"ANALYZING FILE: {file_path}")
-        print(f"{'='*60}")
-        
-        # 1. Close all documents
+        # Close all documents
         swApp.CloseAllDocuments(True)
+        time.sleep(0.5)
+        print("[2] All documents closed")
         
-        # 2. Open the target document
-        # swOpenDocOptions: 0=silent, 1=read-only
+        # Open the document
         errors = 0
         warnings = 0
         opened_doc = swApp.OpenDoc6(file_path, 1, 0, "", errors, warnings)
         
         if not opened_doc:
-            raise Exception(f"Failed to open document: {file_path}")
+            raise Exception(f"Failed to open: {file_path}")
         
-        print(f"Document opened successfully")
+        print("[3] Document opened successfully")
         
-        # 3. Get active document handle
+        # Get active document
         swModel = swApp.ActiveDoc
         if not swModel:
-            raise Exception("Could not get active document handle")
+            raise Exception("Could not get active document")
         
-        # 4. Force rebuild
-        print("Forcing rebuild...")
+        print(f"[4] Active document: {swModel.GetTitle()}")
+        
+        # Rebuild
+        print("[5] Rebuilding model...")
         swModel.ForceRebuild3(True)
-        swModel.ViewZoomtofit2()
-        print("Rebuild complete")
+        time.sleep(0.5)  # Give it time to rebuild
+        print("[6] Rebuild complete")
         
-        # 5A. Feature Signature
-        print("Extracting feature signature...")
+        # Feature signature
+        print("[7] Extracting features...")
         feature = swModel.FirstFeature()
         feature_count = 0
         while feature:
             results["signature"].append({"name": feature.Name, "type": feature.GetTypeName2()})
             feature = feature.GetNextFeature()
             feature_count += 1
-        print(f"Found {feature_count} features")
+        print(f"[8] Found {feature_count} features")
         
-        # 5B. Volume Calculation - FIXED APPROACH
-        print("Calculating volume...")
+        # Volume calculation - TRY MULTIPLE METHODS
+        print("[9] Calculating volume using multiple methods...")
         
-        # Get mass properties - returns array with volume at index 3
-        # Parameters: (accuracy: 0=default)
-        mass_props_array = swModel.Extension.GetMassProperties2(0, None, False)
+        volume_mm3 = 0.0
+        method_used = "None"
         
-        if mass_props_array and len(mass_props_array) > 3:
-            # Index 3 contains the volume in document units CUBED
-            raw_volume = mass_props_array[3]
-            
-            # Get the document's unit system
-            # 0=IPS (inches), 1=CGS (cm), 2=MMGS (mm), 3=MKS (meters)
-            unit_system = swModel.GetUserPreferenceIntegerValue(3)  # swUnitsLinear
-            
-            print(f"Raw volume from API: {raw_volume}")
-            print(f"Unit system: {unit_system}")
-            
-            # Convert to cubic millimeters
-            if unit_system == 0:  # IPS (cubic inches)
-                volume_mm3 = raw_volume * (25.4 ** 3)
-                print(f"Converting from cubic inches: {raw_volume} in^3 = {volume_mm3} mm^3")
-            elif unit_system == 1:  # CGS (cubic cm)
-                volume_mm3 = raw_volume * (10 ** 3)
-                print(f"Converting from cubic cm: {raw_volume} cm^3 = {volume_mm3} mm^3")
-            elif unit_system == 2:  # MMGS (cubic mm)
-                volume_mm3 = raw_volume
-                print(f"Already in cubic mm: {volume_mm3} mm^3")
-            elif unit_system == 3:  # MKS (cubic meters)
-                volume_mm3 = raw_volume * (1000 ** 3)
-                print(f"Converting from cubic meters: {raw_volume} m^3 = {volume_mm3} mm^3")
-            else:
-                volume_mm3 = raw_volume
-                print(f"Unknown unit system, using raw value: {volume_mm3}")
-            
-            results["volume_mm3"] = volume_mm3
-            print(f"FINAL VOLUME: {volume_mm3:.2f} mm^3")
-        else:
-            print("ERROR: Could not get mass properties")
-            results["error"] = "Failed to calculate mass properties"
+        # METHOD 1: GetMassProperties2
+        try:
+            print("    Trying GetMassProperties2...")
+            mass_array = swModel.Extension.GetMassProperties2(0, None, False)
+            if mass_array and len(mass_array) > 3:
+                raw_vol = mass_array[3]
+                unit_sys = swModel.GetUserPreferenceIntegerValue(3)
+                
+                print(f"    Raw volume: {raw_vol}")
+                print(f"    Unit system: {unit_sys} (0=in, 1=cm, 2=mm, 3=m)")
+                
+                if unit_sys == 0:  # inches
+                    volume_mm3 = raw_vol * (25.4 ** 3)
+                elif unit_sys == 1:  # cm
+                    volume_mm3 = raw_vol * (10 ** 3)
+                elif unit_sys == 2:  # mm
+                    volume_mm3 = raw_vol
+                elif unit_sys == 3:  # meters
+                    volume_mm3 = raw_vol * (1000 ** 3)
+                else:
+                    volume_mm3 = raw_vol
+                
+                if volume_mm3 > 0:
+                    method_used = "GetMassProperties2"
+                    print(f"    SUCCESS: Volume = {volume_mm3:.6f} mm^3")
+        except Exception as e:
+            print(f"    Method 1 failed: {e}")
         
-        # 5C. GD&T Data
-        print("Extracting GD&T data...")
+        # METHOD 2: CreateMassProperty (if method 1 failed)
+        if volume_mm3 == 0:
+            try:
+                print("    Trying CreateMassProperty...")
+                mass_prop = swModel.Extension.CreateMassProperty()
+                if mass_prop:
+                    mass_prop.UseSystemUnits = False
+                    if mass_prop.Recalculate():
+                        raw_vol = mass_prop.Volume
+                        unit_sys = swModel.GetUserPreferenceIntegerValue(3)
+                        
+                        print(f"    Raw volume: {raw_vol}")
+                        print(f"    Unit system: {unit_sys}")
+                        
+                        if unit_sys == 0:
+                            volume_mm3 = raw_vol * (25.4 ** 3)
+                        elif unit_sys == 1:
+                            volume_mm3 = raw_vol * (10 ** 3)
+                        elif unit_sys == 2:
+                            volume_mm3 = raw_vol
+                        elif unit_sys == 3:
+                            volume_mm3 = raw_vol * (1000 ** 3)
+                        else:
+                            volume_mm3 = raw_vol
+                        
+                        if volume_mm3 > 0:
+                            method_used = "CreateMassProperty"
+                            print(f"    SUCCESS: Volume = {volume_mm3:.6f} mm^3")
+            except Exception as e:
+                print(f"    Method 2 failed: {e}")
+        
+        # METHOD 3: GetMassProperties (legacy, if others failed)
+        if volume_mm3 == 0:
+            try:
+                print("    Trying GetMassProperties (legacy)...")
+                mass_array = swModel.Extension.GetMassProperties(1, 0)
+                if mass_array and len(mass_array) > 5:
+                    raw_vol = mass_array[3]  # Try index 3
+                    unit_sys = swModel.GetUserPreferenceIntegerValue(3)
+                    
+                    print(f"    Raw volume at [3]: {raw_vol}")
+                    
+                    if unit_sys == 0:
+                        volume_mm3 = raw_vol * (25.4 ** 3)
+                    elif unit_sys == 1:
+                        volume_mm3 = raw_vol * (10 ** 3)
+                    elif unit_sys == 2:
+                        volume_mm3 = raw_vol
+                    elif unit_sys == 3:
+                        volume_mm3 = raw_vol * (1000 ** 3)
+                    else:
+                        volume_mm3 = raw_vol
+                    
+                    if volume_mm3 > 0:
+                        method_used = "GetMassProperties[3]"
+                        print(f"    SUCCESS: Volume = {volume_mm3:.6f} mm^3")
+            except Exception as e:
+                print(f"    Method 3 failed: {e}")
+        
+        results["volume_mm3"] = volume_mm3
+        print(f"[10] FINAL VOLUME: {volume_mm3:.6f} mm^3 (method: {method_used})")
+        
+        if volume_mm3 == 0:
+            print("    WARNING: Volume is ZERO! This is likely incorrect.")
+            results["error"] = "Volume calculation returned 0"
+        
+        # GD&T Data
+        print("[11] Extracting GD&T data...")
         gdt_data = get_gdt_data(swModel)
         results["gdt_data"] = gdt_data
         results["gdt_callouts"] = gdt_data["combined_signature"]
-        
-        print(f"GD&T Summary:")
-        print(f"  - Feature Control Frames: {len(gdt_data['feature_control_frames'])}")
-        print(f"  - DimXpert Annotations: {len(gdt_data['dimxpert_annotations'])}")
-        print(f"  - Datums: {len(gdt_data['datums'])}")
-        print(f"  - Total GD&T items: {len(gdt_data['combined_signature'])}")
+        print(f"[12] GD&T items found: {len(gdt_data['combined_signature'])}")
         
         results["status"] = "Success"
-        print("Analysis complete successfully!")
+        print("[13] Analysis COMPLETE")
         
     except Exception as e:
         error_msg = str(e)
         results["error"] = error_msg
-        print(f"ERROR: {error_msg}")
+        print(f"\n[ERROR] {error_msg}")
         import traceback
         traceback.print_exc()
         
@@ -232,11 +275,12 @@ def analyze_part(file_path):
         if swModel:
             try:
                 swApp.CloseDoc(swModel.GetTitle())
-                print("Document closed")
+                print("[14] Document closed")
             except:
                 pass
         pythoncom.CoUninitialize()
     
+    print(f"{'='*70}\n")
     return results
 
 if __name__ == "__main__":
@@ -249,6 +293,10 @@ if __name__ == "__main__":
     with open(sys.argv[2], 'w') as f:
         json.dump(result, f, indent=4)
     
-    print(f"\nResults written to {sys.argv[2]}")
+    print(f"\n*** RESULTS SUMMARY ***")
     print(f"Status: {result['status']}")
-    print(f"Volume: {result['volume_mm3']:.2f} mm^3")
+    print(f"Volume: {result['volume_mm3']:.6f} mm^3")
+    print(f"Features: {len(result['signature'])}")
+    print(f"GD&T items: {len(result.get('gdt_callouts', []))}")
+    print(f"Error: {result.get('error', 'None')}")
+    print(f"Output written to: {sys.argv[2]}")
