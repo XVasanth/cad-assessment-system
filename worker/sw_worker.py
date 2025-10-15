@@ -1,15 +1,16 @@
 # worker/sw_worker.py
 import win32com.client, sys, json
-import pythoncom # Import the low-level COM library
+import pythoncom
 
 def get_gdt_data(swModel):
-    # This function is unchanged
+    """Iterates through annotations to extract GD&T Feature Control Frame data."""
     gdt_list = []
     try:
         swAnnManager = swModel.Extension.GetAnnotationManager()
         if not swAnnManager: return gdt_list
         swAnnViews = swAnnManager.GetAnnotationViews()
         if not swAnnViews: return gdt_list
+
         for view in swAnnViews:
             view.Activate()
             annotations = view.GetAnnotations()
@@ -23,36 +24,51 @@ def get_gdt_data(swModel):
         return []
 
 def analyze_part(file_path):
-    # *** NEW: Initialize COM library for this specific process ***
+    """
+    Analyzes a part using a robust protocol to ensure accurate measurement.
+    """
     pythoncom.CoInitialize()
-    
     results = { "status": "Failed", "signature": [], "volume_mm3": 0.0, "gdt_callouts": [], "error": "" }
     swApp, swModel = None, None
     try:
-        # Use GetActiveObject which is sometimes more reliable for an already running instance
         swApp = win32com.client.GetActiveObject("SldWorks.Application")
+        
+        # 1. WIPE THE SLATE
         swApp.CloseAllDocuments(True)
         
-        swModel = swApp.OpenDoc6(file_path, 1, 1, "", 0, 0)
-        if not swModel: raise Exception(f"Failed to open document: {file_path}")
+        # 2. OPEN THE TARGET DOCUMENT
+        opened_doc = swApp.OpenDoc6(file_path, 1, 1, "", 0, 0)
+        if not opened_doc: raise Exception(f"Failed to open document: {file_path}")
 
-        # Analysis logic is unchanged
+        # 3. EXPLICITLY GET THE ACTIVE DOCUMENT
+        swModel = swApp.ActiveDoc
+        if not swModel: raise Exception("Could not get a handle on the active document.")
+
+        # 4. FORCE A FULL REBUILD (CRITICAL STEP)
+        swModel.ForceRebuild3(True) # True = rebuild all features
+        
+        # --- ANALYSIS NOW PROCEEDS ON THE CORRECT, REBUILT MODEL ---
+
+        # 5A. Feature Signature
         feature = swModel.FirstFeature()
         while feature:
             results["signature"].append({"name": feature.Name, "type": feature.GetTypeName2()})
             feature = feature.GetNextFeature()
 
+        # 5B. Mass Properties
         mass_props = swModel.Extension.GetMassProperties(1, 0)
-        if mass_props: results["volume_mm3"] = mass_props[5] * (1000**3)
+        if mass_props: 
+            results["volume_mm3"] = mass_props[5] * (1000**3)
         
+        # 5C. GD&T Data
         results["gdt_callouts"] = get_gdt_data(swModel)
+        
         results["status"] = "Success"
         
     except Exception as e:
         results["error"] = str(e)
     finally:
         if swModel: swApp.CloseDoc(swModel.GetTitle())
-        # *** NEW: Uninitialize COM library to release all resources ***
         pythoncom.CoUninitialize()
         
     return results
