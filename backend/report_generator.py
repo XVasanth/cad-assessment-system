@@ -76,13 +76,13 @@ def create_report(analysis_data, plagiarism_info, output_pdf_path):
                 reg = Path(cf).stem.split('_', 1)[0]
                 copied_from_display.append(reg)
             pdf.multi_cell(0, 8, 
-                f"ALERT: High similarity detected with submission(s) from: "
+                f"[ALERT] High similarity detected with submission(s) from: "
                 f"{', '.join(copied_from_display)}. Manual review required.")
         else:
-            pdf.multi_cell(0, 8, "ALERT: Potential plagiarism detected. Manual review required.")
+            pdf.multi_cell(0, 8, "[ALERT] Potential plagiarism detected. Manual review required.")
     else:
         pdf.set_text_color(0, 128, 0)
-        pdf.cell(0, 10, "No direct plagiarism detected among peers.", 0, 1)
+        pdf.cell(0, 10, "[PASS] No direct plagiarism detected among peers.", 0, 1)
     
     pdf.set_text_color(0)
     pdf.ln(10)
@@ -95,21 +95,21 @@ def create_report(analysis_data, plagiarism_info, output_pdf_path):
     master_vol = analysis_data.get('master_volume_mm3', 0.0)
     student_vol = analysis_data.get('student_volume_mm3', 0.0)
     
-    pdf.info_row("Master Volume:", f"{master_vol:.2f} mm³")
-    pdf.info_row("Student Volume:", f"{student_vol:.2f} mm³")
+    pdf.info_row("Master Volume:", f"{master_vol:.2f} mm3")
+    pdf.info_row("Student Volume:", f"{student_vol:.2f} mm3")
     pdf.info_row("Volume Deviation:", f"{deviation:.4f} %", bold_value=True)
     pdf.info_row("Accuracy Grade:", accuracy_grade, bold_value=True)
     
     # Color code the accuracy
     if deviation <= 1.5:
         pdf.set_text_color(0, 128, 0)
-        pdf.multi_cell(0, 8, "✓ Excellent geometric accuracy achieved.")
+        pdf.multi_cell(0, 8, "[PASS] Excellent geometric accuracy achieved.")
     elif deviation <= 5.0:
         pdf.set_text_color(255, 140, 0)
-        pdf.multi_cell(0, 8, "⚠ Acceptable accuracy but room for improvement.")
+        pdf.multi_cell(0, 8, "[WARNING] Acceptable accuracy but room for improvement.")
     else:
         pdf.set_text_color(255, 0, 0)
-        pdf.multi_cell(0, 8, "✗ Significant deviation from master model. Review required.")
+        pdf.multi_cell(0, 8, "[FAIL] Significant deviation from master model. Review required.")
     
     pdf.set_text_color(0)
     pdf.ln(10)
@@ -150,28 +150,28 @@ def create_report(analysis_data, plagiarism_info, output_pdf_path):
     
     if gdt_score >= 95:
         pdf.set_text_color(0, 128, 0)
-        pdf.multi_cell(0, 8, "✓ Excellent! All required GD&T annotations are correctly placed.")
+        pdf.multi_cell(0, 8, "[PASS] Excellent! All required GD&T annotations are correctly placed.")
     elif missing_count > 0 and extra_count == 0:
         pdf.set_text_color(255, 140, 0)
         pdf.multi_cell(0, 8, 
-            f"⚠ Missing {missing_count} required GD&T annotation(s). "
+            f"[WARNING] Missing {missing_count} required GD&T annotation(s). "
             f"Please add the missing tolerances to meet specification.")
     elif missing_count > 0 and extra_count > 0:
         pdf.set_text_color(255, 140, 0)
         pdf.multi_cell(0, 8, 
-            f"⚠ Mixed result: Missing {missing_count} required annotation(s) "
+            f"[WARNING] Mixed result: Missing {missing_count} required annotation(s) "
             f"but has {extra_count} additional annotation(s). Review carefully.")
     elif missing_count == 0 and extra_count > 0:
         pdf.set_text_color(0, 128, 0)
         pdf.multi_cell(0, 8, 
-            f"✓ All required annotations present. Has {extra_count} additional "
+            f"[PASS] All required annotations present. Has {extra_count} additional "
             f"annotation(s) which may provide extra clarity.")
     elif gdt_comp.get('total_required', 0) == 0:
         pdf.set_text_color(128, 128, 128)
-        pdf.multi_cell(0, 8, "ℹ No GD&T requirements specified in master model.")
+        pdf.multi_cell(0, 8, "[INFO] No GD&T requirements specified in master model.")
     else:
         pdf.set_text_color(255, 0, 0)
-        pdf.multi_cell(0, 8, "✗ No GD&T annotations found. Tolerancing is required.")
+        pdf.multi_cell(0, 8, "[FAIL] No GD&T annotations found. Tolerancing is required.")
     
     pdf.set_text_color(0)
     
@@ -185,7 +185,7 @@ def create_report(analysis_data, plagiarism_info, output_pdf_path):
         for ann in missing_anns[:10]:  # Limit to 10 items
             # Truncate long annotations
             ann_text = ann if len(ann) <= 70 else ann[:67] + "..."
-            pdf.multi_cell(0, 5, f"  • {ann_text}")
+            pdf.multi_cell(0, 5, f"  - {ann_text}")
     
     # ============ OVERALL SUMMARY ============
     pdf.ln(10)
