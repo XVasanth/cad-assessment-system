@@ -1,8 +1,9 @@
 # backend/api_server.py
 from flask import Flask, request, send_file
-import subprocess, datetime, zipfile, json, itertools
+import subprocess, datetime, zipfile, json, hashlib
 from pathlib import Path
 import pandas as pd
+from collections import defaultdict
 import report_generator
 
 app = Flask(__name__)
@@ -10,10 +11,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 PROCESSING_DIR = PROJECT_ROOT / "temp_processing_files"
 WORKER_SCRIPT_PATH = PROJECT_ROOT / "worker" / "sw_worker.py"
 PROCESSING_DIR.mkdir(exist_ok=True)
-
-# --- NEW: Define a threshold for what is considered a "complex" sequence of features ---
-# A delta of 3 or fewer features is considered too simple to be a reliable plagiarism signal.
-# You can adjust this value based on your assignments.
 PLAGIARISM_COMPLEXITY_THRESHOLD = 3
 
 def get_analysis_data(file_path, job_dir):
@@ -30,7 +27,6 @@ def analyze():
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     job_dir = PROCESSING_DIR / timestamp; job_dir.mkdir()
     master_file_path = job_dir / master_file.filename; master_file.save(master_file_path)
-
     student_paths = []
     with zipfile.ZipFile(student_zip, 'r') as zf:
         zf.extractall(job_dir)
@@ -54,7 +50,6 @@ def analyze():
         base_modified = not (len(full_signature) >= len(base_signature) and full_signature[:len(base_signature)] == base_signature)
         delta = full_signature[len(base_signature):] if not base_modified else full_signature
         volume_dev = abs(student_volume - master_volume) / master_volume * 100 if master_volume > 0 else 0
-        
         gdt_match = "Match" if student_gdt == master_gdt else "Mismatch"
         if not student_gdt and master_gdt: gdt_match = "Missing"
 
@@ -63,31 +58,33 @@ def analyze():
             "student_volume_mm3": student_volume, "gdt_match_status": gdt_match
         }
     
-    # 3. *** UPDATED PLAGIARISM "HANDSHAKE" CHECK ***
-    plagiarism_results = {name: {"is_plagiarised": False, "copied_from": None} for name in student_analysis_data.keys()}
-    for (s1_name, s2_name) in itertools.combinations(student_analysis_data.keys(), 2):
-        s1_data, s2_data = student_analysis_data[s1_name], student_analysis_data[s2_name]
-        
-        # Condition 1: The feature deltas are identical AND sufficiently complex
-        deltas_match = (
-            len(s1_data["delta"]) > PLAGIARISM_COMPLEXITY_THRESHOLD and 
-            s1_data["delta"] == s2_data["delta"]
-        )
-        
-        # Condition 2: The final volumes are nearly identical (a direct file copy)
-        volumes_match = abs(s1_data["student_volume_mm3"] - s2_data["student_volume_mm3"]) < 0.001
-        
-        # If either condition is true, flag it as plagiarism
-        if deltas_match or volumes_match:
-            plagiarism_results[s1_name].update({"is_plagiarised": True, "copied_from": s2_name})
-            plagiarism_results[s2_name].update({"is_plagiarised": True, "copied_from": s1_name})
+    # 3. *** FINAL, ROBUST PLAGIARISM LOGIC ***
+    plagiarism_results = {name: {"is_plagiarised": False, "copied_from": []} for name in student_analysis_data.keys()}
+    
+    # Group students ONLY by their complex feature delta signature
+    delta_groups = defaultdict(list)
+    for name, data in student_analysis_data.items():
+        delta = data["delta"]
+        # Only consider deltas that are complex enough to be suspicious
+        if len(delta) > PLAGIARISM_COMPLEXITY_THRESHOLD:
+            delta_str = json.dumps(delta, sort_keys=True)
+            delta_hash = hashlib.md5(delta_str.encode()).hexdigest()
+            delta_groups[delta_hash].append(name)
+            
+    # Now, populate results based ONLY on these delta groups
+    for group in delta_groups.values():
+        if len(group) > 1: # A group with more than one member is a plagiarism cluster
+            for member_name in group:
+                plagiarism_results[member_name]["is_plagiarised"] = True
+                plagiarism_results[member_name]["copied_from"].extend([other for other in group if other != member_name])
 
     # 4. Generate Reports and CSV (unchanged)
     pdf_paths, csv_data = [], []
     for s_path in student_paths:
         analysis_data = {"student_file": s_path.name, "master_volume_mm3": master_volume, **student_analysis_data[s_path.name]}
         plagiarism_info = plagiarism_results[s_path.name]
-        
+        plagiarism_info["copied_from"] = sorted(list(set(plagiarism_info["copied_from"])))
+
         output_pdf_path = job_dir / f"{s_path.stem}_report.pdf"
         report_generator.create_report(analysis_data, plagiarism_info, output_pdf_path); pdf_paths.append(output_pdf_path)
         
@@ -104,7 +101,6 @@ def analyze():
     # 5. Create final ZIP package (unchanged)
     summary_csv_path = job_dir / "summary_report.csv"
     pd.DataFrame(csv_data).to_csv(summary_csv_path, index=False)
-
     final_zip_path = job_dir / "assessment_reports.zip"
     with zipfile.ZipFile(final_zip_path, 'w') as zf:
         for pdf_path in pdf_paths: zf.write(pdf_path, arcname=pdf_path.name)
