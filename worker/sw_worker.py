@@ -57,7 +57,6 @@ def get_gdt_data(swModel):
                 if dimxpert_anns:
                     for ann in dimxpert_anns:
                         try:
-                            # Try to get annotation details
                             ann_name = ann.GetName() if hasattr(ann, 'GetName') else str(ann)
                             gdt_data["dimxpert_annotations"].append(ann_name)
                         except:
@@ -79,7 +78,6 @@ def get_gdt_data(swModel):
         try:
             feature = swModel.FirstFeature()
             while feature:
-                # Check if feature has tolerance data
                 feat_type = feature.GetTypeName2()
                 if "Reference" in feat_type or "Dimension" in feat_type or "Tolerance" in feat_type:
                     try:
@@ -120,90 +118,137 @@ def analyze_part(file_path):
         "signature": [], 
         "volume_mm3": 0.0, 
         "gdt_data": {},
-        "gdt_callouts": [],  # Keep for backward compatibility
+        "gdt_callouts": [],
         "error": "" 
     }
     swApp, swModel = None, None
+    
     try:
         swApp = win32com.client.GetActiveObject("SldWorks.Application")
         
-        # 1. WIPE THE SLATE
+        print(f"\n{'='*60}")
+        print(f"ANALYZING FILE: {file_path}")
+        print(f"{'='*60}")
+        
+        # 1. Close all documents
         swApp.CloseAllDocuments(True)
         
-        # 2. OPEN THE TARGET DOCUMENT
-        opened_doc = swApp.OpenDoc6(file_path, 1, 0, "", 0, 0)
-        if not opened_doc: 
+        # 2. Open the target document
+        # swOpenDocOptions: 0=silent, 1=read-only
+        errors = 0
+        warnings = 0
+        opened_doc = swApp.OpenDoc6(file_path, 1, 0, "", errors, warnings)
+        
+        if not opened_doc:
             raise Exception(f"Failed to open document: {file_path}")
-
-        # 3. EXPLICITLY GET THE ACTIVE DOCUMENT
+        
+        print(f"Document opened successfully")
+        
+        # 3. Get active document handle
         swModel = swApp.ActiveDoc
-        if not swModel: 
-            raise Exception("Could not get a handle on the active document.")
-
-        # 4. FORCE A FULL REBUILD (CRITICAL STEP)
+        if not swModel:
+            raise Exception("Could not get active document handle")
+        
+        # 4. Force rebuild
+        print("Forcing rebuild...")
         swModel.ForceRebuild3(True)
         swModel.ViewZoomtofit2()
+        print("Rebuild complete")
         
-        # --- ANALYSIS NOW PROCEEDS ON THE CORRECT, REBUILT MODEL ---
-
         # 5A. Feature Signature
+        print("Extracting feature signature...")
         feature = swModel.FirstFeature()
+        feature_count = 0
         while feature:
             results["signature"].append({"name": feature.Name, "type": feature.GetTypeName2()})
             feature = feature.GetNextFeature()
-
-        # 5B. Mass Properties - FIXED VERSION
-        swModel.Extension.SetUserPreferenceInteger(3, 0, 4)  # Set to millimeters
-        mass_props = swModel.Extension.CreateMassProperty()
+            feature_count += 1
+        print(f"Found {feature_count} features")
         
-        if mass_props:
-            mass_props.UseSystemUnits = False
-            success = mass_props.Recalculate()
+        # 5B. Volume Calculation - FIXED APPROACH
+        print("Calculating volume...")
+        
+        # Get mass properties - returns array with volume at index 3
+        # Parameters: (accuracy: 0=default)
+        mass_props_array = swModel.Extension.GetMassProperties2(0, None, False)
+        
+        if mass_props_array and len(mass_props_array) > 3:
+            # Index 3 contains the volume in document units CUBED
+            raw_volume = mass_props_array[3]
             
-            if success:
-                volume_cubic_mm = mass_props.Volume
-                unit_system = swModel.GetUserPreferenceIntegerValue(3)
-                
-                if unit_system == 0:  # IPS (inches)
-                    volume_cubic_mm = volume_cubic_mm * (25.4 ** 3)
-                elif unit_system == 1:  # CGS (cm)
-                    volume_cubic_mm = volume_cubic_mm * (10 ** 3)
-                elif unit_system == 2:  # MMGS (mm)
-                    volume_cubic_mm = volume_cubic_mm
-                elif unit_system == 3:  # MKS (meters)
-                    volume_cubic_mm = volume_cubic_mm * (1000 ** 3)
-                
-                results["volume_mm3"] = volume_cubic_mm
-                print(f"DEBUG: Volume calculated: {volume_cubic_mm:.2f} mm³")
+            # Get the document's unit system
+            # 0=IPS (inches), 1=CGS (cm), 2=MMGS (mm), 3=MKS (meters)
+            unit_system = swModel.GetUserPreferenceIntegerValue(3)  # swUnitsLinear
+            
+            print(f"Raw volume from API: {raw_volume}")
+            print(f"Unit system: {unit_system}")
+            
+            # Convert to cubic millimeters
+            if unit_system == 0:  # IPS (cubic inches)
+                volume_mm3 = raw_volume * (25.4 ** 3)
+                print(f"Converting from cubic inches: {raw_volume} in^3 = {volume_mm3} mm^3")
+            elif unit_system == 1:  # CGS (cubic cm)
+                volume_mm3 = raw_volume * (10 ** 3)
+                print(f"Converting from cubic cm: {raw_volume} cm^3 = {volume_mm3} mm^3")
+            elif unit_system == 2:  # MMGS (cubic mm)
+                volume_mm3 = raw_volume
+                print(f"Already in cubic mm: {volume_mm3} mm^3")
+            elif unit_system == 3:  # MKS (cubic meters)
+                volume_mm3 = raw_volume * (1000 ** 3)
+                print(f"Converting from cubic meters: {raw_volume} m^3 = {volume_mm3} mm^3")
+            else:
+                volume_mm3 = raw_volume
+                print(f"Unknown unit system, using raw value: {volume_mm3}")
+            
+            results["volume_mm3"] = volume_mm3
+            print(f"FINAL VOLUME: {volume_mm3:.2f} mm^3")
+        else:
+            print("ERROR: Could not get mass properties")
+            results["error"] = "Failed to calculate mass properties"
         
-        # 5C. GD&T Data - COMPREHENSIVE EXTRACTION
+        # 5C. GD&T Data
+        print("Extracting GD&T data...")
         gdt_data = get_gdt_data(swModel)
         results["gdt_data"] = gdt_data
-        results["gdt_callouts"] = gdt_data["combined_signature"]  # Backward compatibility
+        results["gdt_callouts"] = gdt_data["combined_signature"]
         
-        print(f"DEBUG: GD&T extracted:")
+        print(f"GD&T Summary:")
         print(f"  - Feature Control Frames: {len(gdt_data['feature_control_frames'])}")
         print(f"  - DimXpert Annotations: {len(gdt_data['dimxpert_annotations'])}")
         print(f"  - Datums: {len(gdt_data['datums'])}")
         print(f"  - Total GD&T items: {len(gdt_data['combined_signature'])}")
         
         results["status"] = "Success"
+        print("Analysis complete successfully!")
         
     except Exception as e:
-        results["error"] = str(e)
-        print(f"ERROR: {str(e)}")
-    finally:
-        if swModel: 
-            swApp.CloseDoc(swModel.GetTitle())
-        pythoncom.CoUninitialize()
+        error_msg = str(e)
+        results["error"] = error_msg
+        print(f"ERROR: {error_msg}")
+        import traceback
+        traceback.print_exc()
         
+    finally:
+        if swModel:
+            try:
+                swApp.CloseDoc(swModel.GetTitle())
+                print("Document closed")
+            except:
+                pass
+        pythoncom.CoUninitialize()
+    
     return results
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3: 
+    if len(sys.argv) != 3:
         print("Usage: sw_worker.py <input_file> <output_json>")
         sys.exit(1)
+    
     result = analyze_part(sys.argv[1])
-    with open(sys.argv[2], 'w') as f: 
+    
+    with open(sys.argv[2], 'w') as f:
         json.dump(result, f, indent=4)
-    print(f"Analysis complete. Results written to {sys.argv[2]}")
+    
+    print(f"\nResults written to {sys.argv[2]}")
+    print(f"Status: {result['status']}")
+    print(f"Volume: {result['volume_mm3']:.2f} mm^3")
