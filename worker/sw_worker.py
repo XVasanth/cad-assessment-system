@@ -5,7 +5,7 @@ import time
 import os
 
 def analyze_part(file_path):
-    """Analyzes a part - ROBUST VERSION"""
+    """Analyzes a part - WORKING VERSION"""
     pythoncom.CoInitialize()
     results = { 
         "status": "Failed", 
@@ -31,148 +31,79 @@ def analyze_part(file_path):
         time.sleep(0.5)
         print("[2] Closed all documents")
         
-        # Verify file
-        print(f"[3] Opening: {file_path}")
-        if not os.path.exists(file_path):
-            raise Exception(f"File does not exist: {file_path}")
-        
-        file_size = os.path.getsize(file_path)
-        print(f"    File exists, size: {file_size} bytes")
-        
-        if file_size < 1000:
-            raise Exception(f"File too small ({file_size} bytes), likely corrupted")
-        
-        # Try to open with error handling
-        print(f"    Calling OpenDoc...")
-        swModel = None
-        max_attempts = 2
-        
-        for attempt in range(max_attempts):
-            try:
-                swModel = swApp.OpenDoc(str(file_path), 1)
-                if swModel:
-                    print(f"    OpenDoc succeeded on attempt {attempt + 1}")
-                    break
-                else:
-                    print(f"    OpenDoc returned None on attempt {attempt + 1}")
-                    if attempt < max_attempts - 1:
-                        time.sleep(1)
-            except Exception as e:
-                print(f"    OpenDoc exception on attempt {attempt + 1}: {e}")
-                if attempt < max_attempts - 1:
-                    time.sleep(1)
+        # Open file
+        print(f"[3] Opening file...")
+        swModel = swApp.OpenDoc(str(file_path), 1)
         
         if not swModel:
-            raise Exception(f"Failed to open document after {max_attempts} attempts. "
-                          f"File may be corrupted, from incompatible SOLIDWORKS version, or locked by another process.")
+            raise Exception(f"Failed to open document")
         
-        print("[4] Document opened successfully")
+        print("[4] Document opened")
         
-        # Get active document
+        # Ensure it's active
         swModel = swApp.ActiveDoc
-        if not swModel:
-            raise Exception("No active document after opening")
-        
         print("[5] Got active document")
         
         # Rebuild
         print("[6] Rebuilding...")
-        try:
-            swModel.ForceRebuild3(True)
-            time.sleep(1)
-            print("[7] Rebuild complete")
-        except Exception as e:
-            print(f"    Rebuild warning: {e}")
-            print("[7] Continuing despite rebuild issue...")
+        swModel.ForceRebuild3(True)
+        time.sleep(1.0)
+        print("[7] Rebuild complete")
         
-        # CALCULATE VOLUME
-        print("[8] Getting mass properties...")
+        # GET VOLUME VIA BODIES
+        print("[8] Getting volume from bodies...")
         
         volume_mm3 = 0.0
         
-        try:
-            print("    [Method 1] Trying IPartDoc.GetMassProperties...")
-            # Try to get IPartDoc interface
-            part_doc = swModel
+        # Get all solid bodies
+        # GetBodies2(type, visibleOnly)
+        # type: 0 = solid bodies, 1 = surface bodies, 2 = all bodies
+        print("    Getting solid bodies...")
+        body_array = swModel.GetBodies2(0, False)  # Get all solid bodies
+        
+        if body_array and len(body_array) > 0:
+            print(f"    Found {len(body_array)} solid body/bodies")
             
-            # Try calling GetMassProperties directly on the part
-            # Some versions expose it on the part object directly
-            try:
-                # Try with minimal parameters
-                props = part_doc.GetMassProperties()
-                if props and len(props) > 3:
-                    raw_vol = props[3]
-                    print(f"    Method 1 SUCCESS! Volume = {raw_vol}")
-                    volume_mm3 = abs(raw_vol)
-            except Exception as e1:
-                print(f"    Method 1 failed: {e1}")
-            
-            if volume_mm3 < 0.001:
-                print("    [Method 2] Trying to get body and evaluate...")
-                # Try to get the first body in the part
+            total_volume = 0.0
+            for idx in range(len(body_array)):
+                body = body_array[idx]
+                print(f"    Processing body {idx + 1}...")
+                
                 try:
-                    body = part_doc.GetBodies2(0, True)  # 0 = solid bodies
-                    if body and len(body) > 0:
-                        first_body = body[0]
-                        print(f"    Got first body")
-                        
-                        # Try to get body properties
-                        body_props = first_body.GetMassProperties()
-                        if body_props and len(body_props) > 3:
-                            raw_vol = body_props[3]
-                            print(f"    Method 2 SUCCESS! Volume = {raw_vol}")
-                            volume_mm3 = abs(raw_vol)
-                except Exception as e2:
-                    print(f"    Method 2 failed: {e2}")
-            
-            if volume_mm3 < 0.001:
-                print("    [Method 3] Trying EvaluateMassProperties...")
-                # Try IModelDocExtension.EvaluateMassProperties
-                ext = swModel.Extension
-                try:
-                    # Try with no parameters
-                    result = ext.EvaluateMassProperties()
-                    if result:
-                        print(f"    EvaluateMassProperties returned: {result}")
-                        # This might return a tuple or object
-                        if hasattr(result, 'Volume'):
-                            volume_mm3 = abs(result.Volume)
-                            print(f"    Method 3 SUCCESS! Volume = {volume_mm3}")
-                except Exception as e3:
-                    print(f"    Method 3 failed: {e3}")
-            
-            if volume_mm3 < 0.001:
-                print("    [Method 4] Trying SelectionManager approach...")
-                # Try using selection and evaluate
-                try:
-                    # Select all bodies
-                    part_doc.ClearSelection2(True)
+                    # Get mass properties for this body
+                    # Body.GetMassProperties(accuracy)
+                    body_props = body.GetMassProperties(0.0)
                     
-                    # Get bodies
-                    bodies = part_doc.GetBodies2(0, True)
-                    if bodies:
-                        print(f"    Found {len(bodies)} bodies")
-                        # For now just report we found bodies
-                        # In practice you'd sum their volumes
-                except Exception as e4:
-                    print(f"    Method 4 failed: {e4}")
+                    if body_props and len(body_props) >= 4:
+                        # Array structure:
+                        # [0-2] = Center of mass X, Y, Z
+                        # [3] = Volume
+                        # [4] = Surface area
+                        # [5] = Mass
+                        body_volume = body_props[3]
+                        print(f"      Body {idx + 1} volume: {body_volume} mm^3")
+                        total_volume += abs(body_volume)
+                    else:
+                        print(f"      Body {idx + 1}: Could not get properties")
+                        
+                except Exception as e:
+                    print(f"      Body {idx + 1} error: {e}")
+            
+            volume_mm3 = total_volume
+            print(f"\n    >>> TOTAL VOLUME: {volume_mm3:.6f} mm^3 <<<")
             
             if volume_mm3 > 0.001:
-                print(f"\n    >>> FINAL SUCCESS: {volume_mm3:.6f} mm^3 <<<")
                 results["status"] = "Success"
+                print("    >>> SUCCESS! <<<")
             else:
-                print(f"    All methods failed to get volume")
-                
-        except Exception as e:
-            print(f"    ERROR: {e}")
-            import traceback
-            traceback.print_exc()
+                print("    WARNING: Total volume is zero")
+                results["error"] = "Volume calculated as 0"
+        else:
+            print("    ERROR: No solid bodies found in part")
+            results["error"] = "No solid bodies found"
         
         results["volume_mm3"] = volume_mm3
         print(f"\n[9] FINAL VOLUME: {volume_mm3:.6f} mm^3\n")
-        
-        if volume_mm3 < 0.001:
-            results["error"] = "Volume is 0 or near-0"
         
     except Exception as e:
         results["error"] = str(e)
@@ -181,7 +112,6 @@ def analyze_part(file_path):
         traceback.print_exc()
         
     finally:
-        # Close
         if swApp:
             try:
                 swApp.CloseAllDocuments(True)
