@@ -32,23 +32,16 @@ def analyze_part(file_path):
         
         # Open - SIMPLEST METHOD
         print(f"[3] Opening: {file_path}")
-        errors = []
-        warnings = []
         
-        # Use ActivateDoc2 which is simpler
-        swModel = swApp.ActivateDoc2(str(file_path), False, 0)
-        
-        if not swModel:
-            # If ActivateDoc2 failed, try OpenDoc
-            print("    ActivateDoc2 failed, trying OpenDoc...")
-            swModel = swApp.OpenDoc(str(file_path), 1)
+        # Use OpenDoc - this was working before!
+        swModel = swApp.OpenDoc(str(file_path), 1)
         
         if not swModel:
             raise Exception("Failed to open document")
         
         print("[4] Document opened")
         
-        # Ensure it's active
+        # Get active document (OpenDoc should make it active)
         swModel = swApp.ActiveDoc
         if not swModel:
             raise Exception("No active document")
