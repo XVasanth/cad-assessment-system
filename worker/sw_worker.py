@@ -91,52 +91,80 @@ def analyze_part(file_path):
         volume_mm3 = 0.0
         
         try:
-            # Get the extension
-            ext = swModel.Extension
-            print("    Got extension")
+            print("    [Method 1] Trying IPartDoc.GetMassProperties...")
+            # Try to get IPartDoc interface
+            part_doc = swModel
             
-            # Use CreateMassProperty instead - more reliable
-            print("    Calling CreateMassProperty()...")
-            mass_prop = ext.CreateMassProperty()
-            
-            if mass_prop:
-                print("    Created IMassProperty object")
-                
-                # Set to use document units (not system units)
-                mass_prop.UseSystemUnits = False
-                print("    Set UseSystemUnits = False")
-                
-                # Recalculate to ensure fresh data
-                success = mass_prop.Recalculate()
-                print(f"    Recalculate returned: {success}")
-                
-                if success:
-                    # Get volume directly from property
-                    raw_vol = mass_prop.Volume
-                    print(f"\n    >>> RAW VOLUME = {raw_vol} <<<")
-                    
-                    # Also try to get mass and density for verification
-                    try:
-                        mass = mass_prop.Mass
-                        print(f"    Mass: {mass}")
-                    except:
-                        pass
-                    
+            # Try calling GetMassProperties directly on the part
+            # Some versions expose it on the part object directly
+            try:
+                # Try with minimal parameters
+                props = part_doc.GetMassProperties()
+                if props and len(props) > 3:
+                    raw_vol = props[3]
+                    print(f"    Method 1 SUCCESS! Volume = {raw_vol}")
                     volume_mm3 = abs(raw_vol)
+            except Exception as e1:
+                print(f"    Method 1 failed: {e1}")
+            
+            if volume_mm3 < 0.001:
+                print("    [Method 2] Trying to get body and evaluate...")
+                # Try to get the first body in the part
+                try:
+                    body = part_doc.GetBodies2(0, True)  # 0 = solid bodies
+                    if body and len(body) > 0:
+                        first_body = body[0]
+                        print(f"    Got first body")
+                        
+                        # Try to get body properties
+                        body_props = first_body.GetMassProperties()
+                        if body_props and len(body_props) > 3:
+                            raw_vol = body_props[3]
+                            print(f"    Method 2 SUCCESS! Volume = {raw_vol}")
+                            volume_mm3 = abs(raw_vol)
+                except Exception as e2:
+                    print(f"    Method 2 failed: {e2}")
+            
+            if volume_mm3 < 0.001:
+                print("    [Method 3] Trying EvaluateMassProperties...")
+                # Try IModelDocExtension.EvaluateMassProperties
+                ext = swModel.Extension
+                try:
+                    # Try with no parameters
+                    result = ext.EvaluateMassProperties()
+                    if result:
+                        print(f"    EvaluateMassProperties returned: {result}")
+                        # This might return a tuple or object
+                        if hasattr(result, 'Volume'):
+                            volume_mm3 = abs(result.Volume)
+                            print(f"    Method 3 SUCCESS! Volume = {volume_mm3}")
+                except Exception as e3:
+                    print(f"    Method 3 failed: {e3}")
+            
+            if volume_mm3 < 0.001:
+                print("    [Method 4] Trying SelectionManager approach...")
+                # Try using selection and evaluate
+                try:
+                    # Select all bodies
+                    part_doc.ClearSelection2(True)
                     
-                    if volume_mm3 > 0.001:
-                        print(f"    >>> SUCCESS: {volume_mm3:.6f} mm^3 <<<")
-                        results["status"] = "Success"
-                    else:
-                        print(f"    WARNING: Volume is zero or very small: {raw_vol}")
-                else:
-                    print("    ERROR: Recalculate() failed")
-                    
+                    # Get bodies
+                    bodies = part_doc.GetBodies2(0, True)
+                    if bodies:
+                        print(f"    Found {len(bodies)} bodies")
+                        # For now just report we found bodies
+                        # In practice you'd sum their volumes
+                except Exception as e4:
+                    print(f"    Method 4 failed: {e4}")
+            
+            if volume_mm3 > 0.001:
+                print(f"\n    >>> FINAL SUCCESS: {volume_mm3:.6f} mm^3 <<<")
+                results["status"] = "Success"
             else:
-                print("    ERROR: CreateMassProperty returned None")
+                print(f"    All methods failed to get volume")
                 
         except Exception as e:
-            print(f"    ERROR getting mass properties: {e}")
+            print(f"    ERROR: {e}")
             import traceback
             traceback.print_exc()
         
