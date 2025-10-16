@@ -33,11 +33,29 @@ def analyze_part(file_path):
         # Open - SIMPLEST METHOD
         print(f"[3] Opening: {file_path}")
         
+        # Check if file exists
+        import os
+        if not os.path.exists(file_path):
+            raise Exception(f"File does not exist: {file_path}")
+        
+        print(f"    File exists, size: {os.path.getsize(file_path)} bytes")
+        
         # Use OpenDoc - this was working before!
-        swModel = swApp.OpenDoc(str(file_path), 1)
+        print(f"    Calling OpenDoc...")
+        try:
+            swModel = swApp.OpenDoc(str(file_path), 1)
+            print(f"    OpenDoc returned: {swModel}")
+        except Exception as e:
+            print(f"    OpenDoc exception: {e}")
+            swModel = None
         
         if not swModel:
-            raise Exception("Failed to open document")
+            # Get last error from SOLIDWORKS
+            errors = swApp.GetLastError()
+            warnings = swApp.GetLastWarning()
+            print(f"    SOLIDWORKS errors: {errors}")
+            print(f"    SOLIDWORKS warnings: {warnings}")
+            raise Exception(f"Failed to open document. SW Error: {errors}, Warning: {warnings}")
         
         print("[4] Document opened")
         
