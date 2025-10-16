@@ -137,39 +137,75 @@ def analyze():
     for s_path in student_paths:
         print(f"\n{'-'*60}")
         print(f"Analyzing: {s_path.name}")
-        s_data = get_analysis_data(s_path, job_dir)
-        full_signature = s_data.get("signature", [])
-        student_volume = s_data.get("volume_mm3", 0.0)
-        student_gdt_data = s_data.get("gdt_data", {})
         
-        # Check if base was modified
-        base_modified = not (len(full_signature) >= len(base_signature) and 
-                           full_signature[:len(base_signature)] == base_signature)
-        delta = full_signature[len(base_signature):] if not base_modified else full_signature
-        
-        # Volume deviation
-        volume_dev = abs(student_volume - master_volume) / master_volume * 100 if master_volume > 0 else 0
-        
-        print(f"\n*** VOLUME COMPARISON ***")
-        print(f"  Master Volume: {master_volume:.6f} mm^3")
-        print(f"  Student Volume: {student_volume:.6f} mm^3")
-        print(f"  Difference: {abs(student_volume - master_volume):.6f} mm^3")
-        print(f"  Deviation: {volume_dev:.4f}%")
-        print(f"{'*'*30}")
-        
-        # Detailed GD&T comparison
-        gdt_comparison = compare_gdt(master_gdt_data, student_gdt_data)
-        print(f"  GD&T Score: {gdt_comparison['score']}% ({gdt_comparison['status']})")
-        if gdt_comparison['missing_count'] > 0:
-            print(f"  Missing {gdt_comparison['missing_count']} GD&T annotations")
-        
-        student_analysis_data[s_path.name] = {
-            "delta": delta,
-            "base_modified": base_modified,
-            "volume_deviation_percent": volume_dev,
-            "student_volume_mm3": student_volume,
-            "gdt_comparison": gdt_comparison
-        }
+        try:
+            s_data = get_analysis_data(s_path, job_dir)
+            
+            # Check if analysis succeeded
+            if s_data.get('status') != 'Success':
+                print(f"  WARNING: Analysis failed for {s_path.name}")
+                print(f"  Error: {s_data.get('error', 'Unknown error')}")
+                # Still add it with 0 volume so it appears in the report
+            
+            full_signature = s_data.get("signature", [])
+            student_volume = s_data.get("volume_mm3", 0.0)
+            student_gdt_data = s_data.get("gdt_data", {})
+            
+            # Check if base was modified
+            base_modified = not (len(full_signature) >= len(base_signature) and 
+                               full_signature[:len(base_signature)] == base_signature)
+            delta = full_signature[len(base_signature):] if not base_modified else full_signature
+            
+            # Volume deviation
+            volume_dev = abs(student_volume - master_volume) / master_volume * 100 if master_volume > 0 else 0
+            
+            print(f"\n*** VOLUME COMPARISON ***")
+            print(f"  Master Volume: {master_volume:.6f} mm^3")
+            print(f"  Student Volume: {student_volume:.6f} mm^3")
+            print(f"  Difference: {abs(student_volume - master_volume):.6f} mm^3")
+            print(f"  Deviation: {volume_dev:.4f}%")
+            print(f"{'*'*30}")
+            
+            # Detailed GD&T comparison
+            gdt_comparison = compare_gdt(master_gdt_data, student_gdt_data)
+            print(f"  GD&T Score: {gdt_comparison['score']}% ({gdt_comparison['status']})")
+            if gdt_comparison['missing_count'] > 0:
+                print(f"  Missing {gdt_comparison['missing_count']} GD&T annotations")
+            
+            student_analysis_data[s_path.name] = {
+                "delta": delta,
+                "base_modified": base_modified,
+                "volume_deviation_percent": volume_dev,
+                "student_volume_mm3": student_volume,
+                "gdt_comparison": gdt_comparison,
+                "analysis_error": s_data.get('error', '')
+            }
+            
+        except Exception as e:
+            print(f"  CRITICAL ERROR analyzing {s_path.name}: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            # Add failed entry
+            student_analysis_data[s_path.name] = {
+                "delta": [],
+                "base_modified": False,
+                "volume_deviation_percent": 0.0,
+                "student_volume_mm3": 0.0,
+                "gdt_comparison": {
+                    "status": "Failed",
+                    "score": 0,
+                    "total_required": 0,
+                    "total_found": 0,
+                    "matching_count": 0,
+                    "missing_count": 0,
+                    "extra_count": 0,
+                    "missing_annotations": [],
+                    "extra_annotations": [],
+                    "details": {}
+                },
+                "analysis_error": str(e)
+            }
     
     # 4. Plagiarism Logic (unchanged)
     plagiarism_results = {name: {"is_plagiarised": False, "copied_from": []} 
@@ -209,6 +245,8 @@ def analyze():
         reg_num, part_name = parts if len(parts) == 2 else ("N/A", stem)
         
         gdt_comp = analysis_data['gdt_comparison']
+        analysis_err = analysis_data.get('analysis_error', '')
+        
         csv_data.append({
             "Register Number": reg_num,
             "Part Name": part_name,
@@ -218,7 +256,8 @@ def analyze():
             "GD&T Score (%)": gdt_comp['score'],
             "GD&T Status": gdt_comp['status'],
             "Missing GD&T": gdt_comp['missing_count'],
-            "Plagiarism Flag": "YES" if plagiarism_info['is_plagiarised'] else "NO"
+            "Plagiarism Flag": "YES" if plagiarism_info['is_plagiarised'] else "NO",
+            "Errors": "FAILED: " + analysis_err if analysis_err else "OK"
         })
 
     # 6. Create final ZIP package
