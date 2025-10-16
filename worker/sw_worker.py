@@ -64,10 +64,11 @@ def analyze_part(file_path):
             ext = swModel.Extension
             print("    Got extension")
             
-            # Call GetMassProperties with just one parameter
-            # 0 = default accuracy
-            print("    Calling GetMassProperties(0)...")
-            props = ext.GetMassProperties(0)
+            # GetMassProperties needs TWO parameters:
+            # 1. Accuracy (0 = default)
+            # 2. LowAccuracyAtHighVolumes (usually None or 0)
+            print("    Calling GetMassProperties(0, None)...")
+            props = ext.GetMassProperties(0, None)
             
             if props:
                 print(f"    SUCCESS! Got array with {len(props)} elements")
