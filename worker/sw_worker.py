@@ -2,9 +2,10 @@
 import win32com.client, sys, json
 import pythoncom
 import time
+import os
 
 def analyze_part(file_path):
-    """Analyzes a part - SIMPLEST POSSIBLE APPROACH"""
+    """Analyzes a part - ROBUST VERSION"""
     pythoncom.CoInitialize()
     results = { 
         "status": "Failed", 
@@ -21,7 +22,7 @@ def analyze_part(file_path):
         print(f"ANALYZING: {file_path}")
         print(f"{'='*70}")
         
-        # Connect to SOLIDWORKS - use GetActiveObject
+        # Connect to SOLIDWORKS
         swApp = win32com.client.GetActiveObject("SldWorks.Application")
         print("[1] Connected to SOLIDWORKS")
         
@@ -30,49 +31,61 @@ def analyze_part(file_path):
         time.sleep(0.5)
         print("[2] Closed all documents")
         
-        # Open - SIMPLEST METHOD
+        # Verify file
         print(f"[3] Opening: {file_path}")
-        
-        # Check if file exists
-        import os
         if not os.path.exists(file_path):
             raise Exception(f"File does not exist: {file_path}")
         
-        print(f"    File exists, size: {os.path.getsize(file_path)} bytes")
+        file_size = os.path.getsize(file_path)
+        print(f"    File exists, size: {file_size} bytes")
         
-        # Use OpenDoc - this was working before!
+        if file_size < 1000:
+            raise Exception(f"File too small ({file_size} bytes), likely corrupted")
+        
+        # Try to open with error handling
         print(f"    Calling OpenDoc...")
-        try:
-            swModel = swApp.OpenDoc(str(file_path), 1)
-            print(f"    OpenDoc returned: {swModel}")
-        except Exception as e:
-            print(f"    OpenDoc exception: {e}")
-            swModel = None
+        swModel = None
+        max_attempts = 2
+        
+        for attempt in range(max_attempts):
+            try:
+                swModel = swApp.OpenDoc(str(file_path), 1)
+                if swModel:
+                    print(f"    OpenDoc succeeded on attempt {attempt + 1}")
+                    break
+                else:
+                    print(f"    OpenDoc returned None on attempt {attempt + 1}")
+                    if attempt < max_attempts - 1:
+                        time.sleep(1)
+            except Exception as e:
+                print(f"    OpenDoc exception on attempt {attempt + 1}: {e}")
+                if attempt < max_attempts - 1:
+                    time.sleep(1)
         
         if not swModel:
-            # Get last error from SOLIDWORKS
-            errors = swApp.GetLastError()
-            warnings = swApp.GetLastWarning()
-            print(f"    SOLIDWORKS errors: {errors}")
-            print(f"    SOLIDWORKS warnings: {warnings}")
-            raise Exception(f"Failed to open document. SW Error: {errors}, Warning: {warnings}")
+            raise Exception(f"Failed to open document after {max_attempts} attempts. "
+                          f"File may be corrupted, from incompatible SOLIDWORKS version, or locked by another process.")
         
-        print("[4] Document opened")
+        print("[4] Document opened successfully")
         
-        # Get active document (OpenDoc should make it active)
+        # Get active document
         swModel = swApp.ActiveDoc
         if not swModel:
-            raise Exception("No active document")
+            raise Exception("No active document after opening")
         
         print("[5] Got active document")
         
         # Rebuild
         print("[6] Rebuilding...")
-        swModel.ForceRebuild3(True)
-        time.sleep(1)
-        print("[7] Rebuild done")
+        try:
+            swModel.ForceRebuild3(True)
+            time.sleep(1)
+            print("[7] Rebuild complete")
+        except Exception as e:
+            print(f"    Rebuild warning: {e}")
+            print("[7] Continuing despite rebuild issue...")
         
-        # CALCULATE VOLUME - ABSOLUTE SIMPLEST
+        # CALCULATE VOLUME
         print("[8] Getting mass properties...")
         
         volume_mm3 = 0.0
@@ -82,37 +95,37 @@ def analyze_part(file_path):
             ext = swModel.Extension
             print("    Got extension")
             
-            # GetMassProperties needs TWO parameters:
-            # 1. Accuracy (0 = default)
-            # 2. LowAccuracyAtHighVolumes (usually None or 0)
+            # GetMassProperties(Accuracy, LowAccuracyAtHighVolumes)
             print("    Calling GetMassProperties(0, None)...")
             props = ext.GetMassProperties(0, None)
             
             if props:
                 print(f"    SUCCESS! Got array with {len(props)} elements")
                 
-                # Dump everything
-                for i in range(len(props)):
+                # Dump all values
+                for i in range(min(len(props), 10)):  # Show first 10
                     print(f"    props[{i}] = {props[i]}")
                 
                 # Volume is at index 3
-                raw_vol = props[3]
-                print(f"\n    >>> RAW VOLUME = {raw_vol} <<<")
-                
-                # Just use it directly for now
-                volume_mm3 = abs(raw_vol)
-                
-                if volume_mm3 > 0.001:
-                    print(f"    >>> SUCCESS: {volume_mm3} mm^3 <<<")
-                    results["status"] = "Success"
+                if len(props) > 3:
+                    raw_vol = props[3]
+                    print(f"\n    >>> RAW VOLUME = {raw_vol} <<<")
+                    
+                    volume_mm3 = abs(raw_vol)
+                    
+                    if volume_mm3 > 0.001:
+                        print(f"    >>> SUCCESS: {volume_mm3:.6f} mm^3 <<<")
+                        results["status"] = "Success"
+                    else:
+                        print(f"    WARNING: Volume is zero or very small: {raw_vol}")
                 else:
-                    print(f"    Volume is zero or negative: {raw_vol}")
+                    print(f"    ERROR: Array too short (len={len(props)})")
                     
             else:
-                print("    GetMassProperties returned None/empty")
+                print("    ERROR: GetMassProperties returned None/empty")
                 
         except Exception as e:
-            print(f"    ERROR: {e}")
+            print(f"    ERROR getting mass properties: {e}")
             import traceback
             traceback.print_exc()
         
