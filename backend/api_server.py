@@ -32,7 +32,7 @@ def get_analysis_data(file_path, job_dir):
     # Debug: Print what we loaded
     print(f"\n*** JSON DATA LOADED ***")
     print(f"File: {file_path.name}")
-    print(f"Volume from JSON: {data.get('volume_mm3', 0.0):.6f} mm^3")
+    print(f"Volume from JSON: {data.get('volume_mm3', 0.0):.2f} mm^3")
     print(f"Status from JSON: {data.get('status', 'Unknown')}")
     if data.get('error'):
         print(f"Error from JSON: {data.get('error')}")
@@ -124,7 +124,7 @@ def analyze():
     master_gdt_data = master_data.get("gdt_data", {})
     
     print(f"\n*** MASTER DATA RECEIVED ***")
-    print(f"Master Volume: {master_volume:.6f} mm^3")
+    print(f"Master Volume: {master_volume:.2f} mm^3")
     print(f"Master Features: {len(base_signature)}")
     print(f"Master GD&T Count: {len(master_gdt_data.get('combined_signature', []))}")
     print(f"Master Status: {master_data.get('status', 'Unknown')}")
@@ -160,9 +160,9 @@ def analyze():
             volume_dev = abs(student_volume - master_volume) / master_volume * 100 if master_volume > 0 else 0
             
             print(f"\n*** VOLUME COMPARISON ***")
-            print(f"  Master Volume: {master_volume:.6f} mm^3")
-            print(f"  Student Volume: {student_volume:.6f} mm^3")
-            print(f"  Difference: {abs(student_volume - master_volume):.6f} mm^3")
+            print(f"  Master Volume: {master_volume:.2f} mm^3")
+            print(f"  Student Volume: {student_volume:.2f} mm^3")
+            print(f"  Difference: {abs(student_volume - master_volume):.2f} mm^3")
             print(f"  Deviation: {volume_dev:.4f}%")
             print(f"{'*'*30}")
             
