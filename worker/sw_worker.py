@@ -96,8 +96,9 @@ def analyze_part(file_path):
             print("    Got extension")
             
             # GetMassProperties(Accuracy, LowAccuracyAtHighVolumes)
-            print("    Calling GetMassProperties(0, None)...")
-            props = ext.GetMassProperties(0, None)
+            # Second param should be False, not None
+            print("    Calling GetMassProperties(0, False)...")
+            props = ext.GetMassProperties(0, False)
             
             if props:
                 print(f"    SUCCESS! Got array with {len(props)} elements")
