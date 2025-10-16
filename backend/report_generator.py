@@ -62,6 +62,18 @@ def create_report(analysis_data, plagiarism_info, output_pdf_path):
     pdf.cell(0, 10, f"Register Number: {register_number}", 0, 1)
     pdf.cell(0, 10, f"Report Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", 0, 1)
     pdf.ln(10)
+    
+    # Check for file analysis errors
+    file_error = analysis_data.get('analysis_error', '')
+    if file_error:
+        pdf.set_font('Arial', 'B', 14)
+        pdf.set_text_color(255, 0, 0)
+        pdf.cell(0, 10, "[FILE ANALYSIS FAILED]", 0, 1, 'C')
+        pdf.set_font('Arial', '', 11)
+        pdf.multi_cell(0, 8, f"Error: {file_error}")
+        pdf.set_text_color(0)
+        pdf.multi_cell(0, 8, "This file could not be analyzed. It may be corrupted, from an incompatible SOLIDWORKS version, or locked by another process.")
+        pdf.ln(10)
 
     # ============ PLAGIARISM SECTION ============
     pdf.section_header('Plagiarism Analysis')
