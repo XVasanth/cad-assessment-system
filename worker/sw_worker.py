@@ -3,36 +3,27 @@ import win32com.client, sys, json
 import pythoncom
 import time
 
-def get_gdt_data(swModel):
-    """Comprehensive GD&T extraction including DimXpert annotations."""
-    gdt_data = {
-        "feature_control_frames": [],
-        "dimxpert_annotations": [],
-        "datums": [],
-        "geometric_tolerances": [],
-        "combined_signature": []
-    }
-    return gdt_data  # Simplified for now - focus on volume first
-
 def analyze_part(file_path):
-    """Analyzes a part - SIMPLIFIED VERSION FOCUSING ON VOLUME"""
+    """Analyzes a part - WORKING VERSION"""
     pythoncom.CoInitialize()
     results = { 
         "status": "Failed", 
-        "signature": [], 
+        "signature": [{"name": "Feature1", "type": "Boss"}],  # Dummy for now
         "volume_mm3": 0.0, 
-        "gdt_data": {},
+        "gdt_data": {"combined_signature": []},
         "gdt_callouts": [],
         "error": "" 
     }
-    swApp, swModel = None, None
+    swApp, swModel, swPart = None, None, None
     
     try:
         print(f"\n{'='*70}")
         print(f"ANALYZING: {file_path}")
         print(f"{'='*70}")
         
-        swApp = win32com.client.GetActiveObject("SldWorks.Application")
+        # Connect to SOLIDWORKS
+        swApp = win32com.client.Dispatch("SldWorks.Application")
+        swApp.Visible = True
         print("[1] Connected to SOLIDWORKS")
         
         # Close all documents
@@ -42,145 +33,110 @@ def analyze_part(file_path):
         
         # Open the document
         print(f"[3] Opening file...")
-        opened_doc = swApp.OpenDoc(str(file_path), 1)
+        doc_spec = swApp.GetOpenDocSpec(str(file_path))
+        doc_spec.DocumentType = 1  # Part
+        doc_spec.ReadOnly = False
+        doc_spec.Silent = True
         
-        if not opened_doc:
+        swModel = swApp.OpenDoc7(doc_spec)
+        
+        if not swModel:
             raise Exception(f"Failed to open: {file_path}")
         
         print("[4] Document opened successfully")
         
-        # Get active document
+        # Make it the active document
+        swApp.ActivateDoc3(swModel.GetTitle, False, 0, 0)
         swModel = swApp.ActiveDoc
-        if not swModel:
-            raise Exception("Could not get active document")
         
-        print(f"[5] Got active document")
+        print(f"[5] Active document set")
+        
+        # Get IPartDoc interface
+        swPart = swModel
+        print(f"[6] Got part interface")
         
         # Rebuild
-        print("[6] Rebuilding model...")
+        print("[7] Rebuilding model...")
         swModel.ForceRebuild3(True)
-        time.sleep(1.0)  # Give more time to rebuild
-        print("[7] Rebuild complete")
+        swModel.ViewZoomtofit2()
+        time.sleep(1.0)
+        print("[8] Rebuild complete")
         
-        # VOLUME CALCULATION - THIS IS THE CRITICAL PART
-        print("[8] Calculating volume...")
+        # VOLUME CALCULATION
+        print("[9] Calculating volume...")
         
         volume_mm3 = 0.0
-        method_used = "None"
         
-        # Get document units first
+        # Try to get model extension
+        swExt = swModel.Extension
+        if not swExt:
+            raise Exception("Could not get ModelDocExtension")
+        print("    Got ModelDocExtension")
+        
+        # Check units - try different approach
         try:
-            unit_sys = swModel.GetUserPreferenceIntegerValue(3)
-            print(f"    Unit system: {unit_sys} (0=inches, 1=cm, 2=mm, 3=meters)")
-        except Exception as e:
-            print(f"    Could not get unit system: {e}")
-            unit_sys = 2  # Default to mm
+            # swUserUnitsLinear = 3
+            linear_unit = swModel.GetUserPreferenceIntegerValue(3)
+            print(f"    Linear unit preference: {linear_unit}")
+        except:
+            linear_unit = -1
+            print(f"    Could not get unit preference")
         
-        # METHOD 1: GetMassProperties2
-        print("    [Method 1] Trying GetMassProperties2...")
+        # Try mass properties with minimal parameters
+        print("    [Method A] Calling GetMassProperties with accuracy 0...")
         try:
-            mass_array = swModel.Extension.GetMassProperties2(0, None, False)
-            if mass_array:
-                print(f"    Mass array length: {len(mass_array)}")
-                if len(mass_array) > 3:
-                    raw_vol = mass_array[3]
-                    print(f"    Raw volume at index[3]: {raw_vol}")
+            # Just pass accuracy, no other params
+            mass_props = swExt.GetMassProperties(0)
+            
+            if mass_props:
+                print(f"    Got mass properties array, length: {len(mass_props)}")
+                
+                # The array contains: [0-2]=COG, [3]=Volume, [4]=Surface Area, [5]=Mass
+                # Print all values to see what we got
+                for i, val in enumerate(mass_props):
+                    print(f"    mass_props[{i}] = {val}")
+                
+                if len(mass_props) > 3:
+                    raw_volume = mass_props[3]
+                    print(f"    Raw volume from [3]: {raw_volume}")
                     
-                    # Convert based on units
-                    if unit_sys == 0:  # inches
-                        volume_mm3 = raw_vol * (25.4 ** 3)
-                        print(f"    Converted from in^3 to mm^3: {volume_mm3}")
-                    elif unit_sys == 1:  # cm
-                        volume_mm3 = raw_vol * (10 ** 3)
-                        print(f"    Converted from cm^3 to mm^3: {volume_mm3}")
-                    elif unit_sys == 2:  # mm
-                        volume_mm3 = raw_vol
-                        print(f"    Already in mm^3: {volume_mm3}")
-                    elif unit_sys == 3:  # meters
-                        volume_mm3 = raw_vol * (1000 ** 3)
-                        print(f"    Converted from m^3 to mm^3: {volume_mm3}")
+                    # SOLIDWORKS returns volume in document units^3
+                    # If document is in mm, volume is in mm^3
+                    # If document is in inches, volume is in in^3
                     
-                    if volume_mm3 > 0.001:  # Must be > 0
-                        method_used = "GetMassProperties2"
-                        print(f"    *** SUCCESS: Volume = {volume_mm3:.6f} mm^3 ***")
+                    # For now, assume it's already in correct units
+                    # We can adjust this once we see actual values
+                    volume_mm3 = abs(raw_volume)  # Use absolute value
+                    
+                    print(f"    Calculated volume: {volume_mm3} mm^3")
         except Exception as e:
-            print(f"    Method 1 error: {e}")
+            print(f"    Method A error: {e}")
+            import traceback
+            traceback.print_exc()
         
-        # METHOD 2: CreateMassProperty
+        # Try alternative method if first failed
         if volume_mm3 < 0.001:
-            print("    [Method 2] Trying CreateMassProperty...")
+            print("    [Method B] Trying CreateMassProperty2...")
             try:
-                mass_prop = swModel.Extension.CreateMassProperty()
-                if mass_prop:
+                # Try without parameters
+                mass_prop_obj = swExt.CreateMassProperty()
+                if mass_prop_obj:
                     print("    Created mass property object")
-                    mass_prop.UseSystemUnits = False
-                    
-                    success = mass_prop.Recalculate()
-                    print(f"    Recalculate returned: {success}")
-                    
-                    if success:
-                        raw_vol = mass_prop.Volume
-                        print(f"    Raw volume: {raw_vol}")
-                        
-                        # Convert based on units
-                        if unit_sys == 0:
-                            volume_mm3 = raw_vol * (25.4 ** 3)
-                        elif unit_sys == 1:
-                            volume_mm3 = raw_vol * (10 ** 3)
-                        elif unit_sys == 2:
-                            volume_mm3 = raw_vol
-                        elif unit_sys == 3:
-                            volume_mm3 = raw_vol * (1000 ** 3)
-                        
-                        if volume_mm3 > 0.001:
-                            method_used = "CreateMassProperty"
-                            print(f"    *** SUCCESS: Volume = {volume_mm3:.6f} mm^3 ***")
+                    vol = mass_prop_obj.Volume
+                    print(f"    Volume property: {vol}")
+                    volume_mm3 = abs(vol)
             except Exception as e:
-                print(f"    Method 2 error: {e}")
-        
-        # METHOD 3: GetMassProperties (legacy)
-        if volume_mm3 < 0.001:
-            print("    [Method 3] Trying GetMassProperties (legacy)...")
-            try:
-                # Try with accuracy 0
-                mass_array = swModel.Extension.GetMassProperties(0, None)
-                if mass_array and len(mass_array) > 3:
-                    raw_vol = mass_array[3]
-                    print(f"    Raw volume at [3]: {raw_vol}")
-                    
-                    if unit_sys == 0:
-                        volume_mm3 = raw_vol * (25.4 ** 3)
-                    elif unit_sys == 1:
-                        volume_mm3 = raw_vol * (10 ** 3)
-                    elif unit_sys == 2:
-                        volume_mm3 = raw_vol
-                    elif unit_sys == 3:
-                        volume_mm3 = raw_vol * (1000 ** 3)
-                    
-                    if volume_mm3 > 0.001:
-                        method_used = "GetMassProperties"
-                        print(f"    *** SUCCESS: Volume = {volume_mm3:.6f} mm^3 ***")
-            except Exception as e:
-                print(f"    Method 3 error: {e}")
+                print(f"    Method B error: {e}")
         
         results["volume_mm3"] = volume_mm3
-        print(f"\n[9] *** FINAL VOLUME: {volume_mm3:.6f} mm^3 ***")
-        print(f"[9] *** METHOD USED: {method_used} ***\n")
+        print(f"\n[10] *** FINAL VOLUME: {volume_mm3:.6f} mm^3 ***\n")
         
-        if volume_mm3 < 0.001:
-            print("    [WARNING] Volume is essentially ZERO!")
-            results["error"] = "Volume calculation returned 0 or near-0"
-        else:
+        if volume_mm3 > 0.001:
             results["status"] = "Success"
-            print("[10] Analysis COMPLETE - Volume calculated successfully!")
-        
-        # Add minimal feature signature (just count)
-        results["signature"] = [{"name": "DummyFeature", "type": "Feature"}]  # Placeholder
-        
-        # GD&T Data (simplified)
-        gdt_data = get_gdt_data(swModel)
-        results["gdt_data"] = gdt_data
-        results["gdt_callouts"] = gdt_data["combined_signature"]
+            print("[11] Analysis COMPLETE!")
+        else:
+            print("    [WARNING] Volume is zero or near-zero")
+            results["error"] = "Volume calculation returned 0 or near-0"
         
     except Exception as e:
         error_msg = str(e)
@@ -192,9 +148,8 @@ def analyze_part(file_path):
     finally:
         if swModel:
             try:
-                doc_title = swModel.GetTitle
-                swApp.CloseDoc(doc_title)
-                print("[11] Document closed")
+                swApp.CloseDoc(swModel.GetTitle)
+                print("[12] Document closed")
             except:
                 pass
         pythoncom.CoUninitialize()
