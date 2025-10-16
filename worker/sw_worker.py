@@ -139,7 +139,9 @@ def analyze_part(file_path):
         if not swModel:
             raise Exception("Could not get active document")
         
-        print(f"[5] Active document: {swModel.GetTitle()}")
+        # GetTitle is a property, not a method
+        doc_title = swModel.GetTitle
+        print(f"[5] Active document: {doc_title}")
         
         # Rebuild
         print("[6] Rebuilding model...")
