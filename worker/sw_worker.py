@@ -95,22 +95,32 @@ def analyze_part(file_path):
             ext = swModel.Extension
             print("    Got extension")
             
-            # GetMassProperties(Accuracy, LowAccuracyAtHighVolumes)
-            # Second param should be False, not None
-            print("    Calling GetMassProperties(0, False)...")
-            props = ext.GetMassProperties(0, False)
+            # Use CreateMassProperty instead - more reliable
+            print("    Calling CreateMassProperty()...")
+            mass_prop = ext.CreateMassProperty()
             
-            if props:
-                print(f"    SUCCESS! Got array with {len(props)} elements")
+            if mass_prop:
+                print("    Created IMassProperty object")
                 
-                # Dump all values
-                for i in range(min(len(props), 10)):  # Show first 10
-                    print(f"    props[{i}] = {props[i]}")
+                # Set to use document units (not system units)
+                mass_prop.UseSystemUnits = False
+                print("    Set UseSystemUnits = False")
                 
-                # Volume is at index 3
-                if len(props) > 3:
-                    raw_vol = props[3]
+                # Recalculate to ensure fresh data
+                success = mass_prop.Recalculate()
+                print(f"    Recalculate returned: {success}")
+                
+                if success:
+                    # Get volume directly from property
+                    raw_vol = mass_prop.Volume
                     print(f"\n    >>> RAW VOLUME = {raw_vol} <<<")
+                    
+                    # Also try to get mass and density for verification
+                    try:
+                        mass = mass_prop.Mass
+                        print(f"    Mass: {mass}")
+                    except:
+                        pass
                     
                     volume_mm3 = abs(raw_vol)
                     
@@ -120,10 +130,10 @@ def analyze_part(file_path):
                     else:
                         print(f"    WARNING: Volume is zero or very small: {raw_vol}")
                 else:
-                    print(f"    ERROR: Array too short (len={len(props)})")
+                    print("    ERROR: Recalculate() failed")
                     
             else:
-                print("    ERROR: GetMassProperties returned None/empty")
+                print("    ERROR: CreateMassProperty returned None")
                 
         except Exception as e:
             print(f"    ERROR getting mass properties: {e}")
