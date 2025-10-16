@@ -90,20 +90,20 @@ def analyze_part(file_path):
                     print(f"      Body {idx + 1} error: {e}")
             
             volume_mm3 = total_volume
-            print(f"\n    >>> TOTAL VOLUME: {volume_mm3:.6f} mm^3 <<<")
+            print(f"\n    >>> TOTAL VOLUME: {volume_mm3:.2f} mm^3 <<<")
             
-            if volume_mm3 > 0.001:
+            if volume_mm3 > 1.0:  # Threshold changed to 1 mm³
                 results["status"] = "Success"
                 print("    >>> SUCCESS! <<<")
             else:
-                print("    WARNING: Total volume is zero")
-                results["error"] = "Volume calculated as 0"
+                print("    WARNING: Volume below threshold")
+                results["error"] = "Volume below 1 mm3 threshold"
         else:
             print("    ERROR: No solid bodies found in part")
             results["error"] = "No solid bodies found"
         
         results["volume_mm3"] = volume_mm3
-        print(f"\n[9] FINAL VOLUME: {volume_mm3:.6f} mm^3\n")
+        print(f"\n[9] FINAL VOLUME: {volume_mm3:.2f} mm^3\n")
         
     except Exception as e:
         results["error"] = str(e)
@@ -135,5 +135,5 @@ if __name__ == "__main__":
     
     print(f"\n*** RESULTS SUMMARY ***")
     print(f"Status: {result['status']}")
-    print(f"Volume: {result['volume_mm3']:.6f} mm^3")
+    print(f"Volume: {result['volume_mm3']:.2f} mm^3")
     print(f"Error: {result.get('error', 'None')}")
