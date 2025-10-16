@@ -121,41 +121,44 @@ def analyze_part(file_path):
         time.sleep(0.5)
         print("[2] All documents closed")
         
-        # Open the document
-        errors = 0
-        warnings = 0
-        opened_doc = swApp.OpenDoc6(file_path, 1, 0, "", errors, warnings)
+        # Open the document - FIXED: Use OpenDoc instead of OpenDoc6
+        # OpenDoc is simpler and doesn't require by-reference parameters
+        # Parameters: (FileName, Type, Options)
+        # Type: 1 = Part
+        # Options: 1 = Silent mode
+        print(f"[3] Opening file: {file_path}")
+        opened_doc = swApp.OpenDoc(str(file_path), 1)
         
         if not opened_doc:
             raise Exception(f"Failed to open: {file_path}")
         
-        print("[3] Document opened successfully")
+        print("[4] Document opened successfully")
         
         # Get active document
         swModel = swApp.ActiveDoc
         if not swModel:
             raise Exception("Could not get active document")
         
-        print(f"[4] Active document: {swModel.GetTitle()}")
+        print(f"[5] Active document: {swModel.GetTitle()}")
         
         # Rebuild
-        print("[5] Rebuilding model...")
+        print("[6] Rebuilding model...")
         swModel.ForceRebuild3(True)
         time.sleep(0.5)  # Give it time to rebuild
-        print("[6] Rebuild complete")
+        print("[7] Rebuild complete")
         
         # Feature signature
-        print("[7] Extracting features...")
+        print("[8] Extracting features...")
         feature = swModel.FirstFeature()
         feature_count = 0
         while feature:
             results["signature"].append({"name": feature.Name, "type": feature.GetTypeName2()})
             feature = feature.GetNextFeature()
             feature_count += 1
-        print(f"[8] Found {feature_count} features")
+        print(f"[9] Found {feature_count} features")
         
         # Volume calculation - TRY MULTIPLE METHODS
-        print("[9] Calculating volume using multiple methods...")
+        print("[10] Calculating volume using multiple methods...")
         
         volume_mm3 = 0.0
         method_used = "None"
@@ -248,21 +251,21 @@ def analyze_part(file_path):
                 print(f"    Method 3 failed: {e}")
         
         results["volume_mm3"] = volume_mm3
-        print(f"[10] FINAL VOLUME: {volume_mm3:.6f} mm^3 (method: {method_used})")
+        print(f"[11] FINAL VOLUME: {volume_mm3:.6f} mm^3 (method: {method_used})")
         
         if volume_mm3 == 0:
             print("    WARNING: Volume is ZERO! This is likely incorrect.")
             results["error"] = "Volume calculation returned 0"
         
         # GD&T Data
-        print("[11] Extracting GD&T data...")
+        print("[12] Extracting GD&T data...")
         gdt_data = get_gdt_data(swModel)
         results["gdt_data"] = gdt_data
         results["gdt_callouts"] = gdt_data["combined_signature"]
-        print(f"[12] GD&T items found: {len(gdt_data['combined_signature'])}")
+        print(f"[13] GD&T items found: {len(gdt_data['combined_signature'])}")
         
         results["status"] = "Success"
-        print("[13] Analysis COMPLETE")
+        print("[14] Analysis COMPLETE")
         
     except Exception as e:
         error_msg = str(e)
@@ -275,7 +278,7 @@ def analyze_part(file_path):
         if swModel:
             try:
                 swApp.CloseDoc(swModel.GetTitle())
-                print("[14] Document closed")
+                print("[15] Document closed")
             except:
                 pass
         pythoncom.CoUninitialize()
