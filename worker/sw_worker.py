@@ -5,7 +5,7 @@ import time
 import os
 
 def analyze_part(file_path):
-    """Analyzes a part - WORKING VERSION"""
+    """Analyzes a part - WORKING VERSION WITH CORRECT UNITS"""
     pythoncom.CoInitialize()
     results = { 
         "status": "Failed", 
@@ -56,8 +56,6 @@ def analyze_part(file_path):
         volume_mm3 = 0.0
         
         # Get all solid bodies
-        # GetBodies2(type, visibleOnly)
-        # type: 0 = solid bodies, 1 = surface bodies, 2 = all bodies
         print("    Getting solid bodies...")
         body_array = swModel.GetBodies2(0, False)  # Get all solid bodies
         
@@ -71,18 +69,14 @@ def analyze_part(file_path):
                 
                 try:
                     # Get mass properties for this body
-                    # Body.GetMassProperties(accuracy)
                     body_props = body.GetMassProperties(0.0)
                     
                     if body_props and len(body_props) >= 4:
-                        # Array structure:
-                        # [0-2] = Center of mass X, Y, Z
-                        # [3] = Volume
-                        # [4] = Surface area
-                        # [5] = Mass
-                        body_volume = body_props[3]
-                        print(f"      Body {idx + 1} volume: {body_volume} mm^3")
-                        total_volume += abs(body_volume)
+                        # CRITICAL FIX: Volume is returned in cubic METERS
+                        # Convert to cubic millimeters: 1 m³ = 1,000,000,000 mm³
+                        body_volume_mm3 = body_props[3] * 1e9
+                        print(f"      Body {idx + 1} volume: {body_volume_mm3:.2f} mm^3")
+                        total_volume += abs(body_volume_mm3)
                     else:
                         print(f"      Body {idx + 1}: Could not get properties")
                         
@@ -92,7 +86,7 @@ def analyze_part(file_path):
             volume_mm3 = total_volume
             print(f"\n    >>> TOTAL VOLUME: {volume_mm3:.2f} mm^3 <<<")
             
-            if volume_mm3 > 1.0:  # Threshold changed to 1 mm³
+            if volume_mm3 > 1.0:  # Threshold: 1 mm³
                 results["status"] = "Success"
                 print("    >>> SUCCESS! <<<")
             else:
